@@ -1,0 +1,3 @@
+[submodule "FlashTools/Thor"]
+	path = FlashTools/Thor
+	url = https://github.com/Samsung-Loki/Thor.git
