@@ -1,3 +1,7 @@
 [submodule "FlashTools/Thor"]
 	path = FlashTools/Thor
 	url = https://github.com/Samsung-Loki/Thor.git
+[submodule "FlashTools/Heimdall"]
+	path = FlashTools/Heimdall
+	url = https://git.sr.ht/~grimler/Heimdall
+	branch = master
