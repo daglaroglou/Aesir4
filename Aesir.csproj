@@ -7,6 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
@@ -18,7 +19,12 @@
     <PackageReference Include="Serilog" Version="4.3.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Spectre.Console" Version="0.51.1" />
-    <Compile Remove="FlashTools/Thor/TheAirBlow.Thor.Shell/Program.cs" />
+    <Compile Remove="FlashTools/Thor/TheAirBlow.Thor.Shell/**/*.cs" />
+    <Compile Remove="FlashTools/Thor/TheAirBlow.Thor.Library/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="FlashTools/Thor/TheAirBlow.Thor.Library/TheAirBlow.Thor.Library.csproj" />
   </ItemGroup>
 
 </Project>

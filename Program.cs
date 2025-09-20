@@ -6,9 +6,257 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using Serilog;
+using TheAirBlow.Thor.Library;
+using TheAirBlow.Thor.Library.Communication;
+using TheAirBlow.Thor.Library.Protocols;
+using TheAirBlow.Thor.Library.PIT;
+using K4os.Compression.LZ4.Streams;
 
 namespace Aesir
 {
+    public class ThorFlashManager
+    {
+        private IHandler? _handler;
+        private Odin? _odinProtocol;
+        private bool _isConnected = false;
+        
+        public delegate void LogMessageDelegate(string message);
+        public event LogMessageDelegate? OnLogMessage;
+        
+        public delegate void ProgressDelegate(int percentage, string message);
+        public event ProgressDelegate? OnProgress;
+        
+        public async Task<bool> InitializeAsync()
+        {
+            try
+            {
+                Log.Logger = new LoggerConfiguration()
+                    .MinimumLevel.Debug()
+                    .WriteTo.Console()
+                    .CreateLogger();
+                
+                if (!USB.TryGetHandler(out _handler))
+                {
+                    OnLogMessage?.Invoke("ERROR: USB handler not available for this platform");
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke("Thor library initialized successfully");
+                
+                // Initialize device database
+                OnLogMessage?.Invoke("Loading device database...");
+                var initResult = await Lookup.Initialize();
+                switch (initResult)
+                {
+                    case Lookup.InitState.Downloaded:
+                        OnLogMessage?.Invoke("Device database downloaded and cached");
+                        break;
+                    case Lookup.InitState.Cache:
+                        OnLogMessage?.Invoke("Device database loaded from cache");
+                        break;
+                    case Lookup.InitState.Failed:
+                        OnLogMessage?.Invoke("WARNING: Failed to load device database");
+                        break;
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to initialize Thor: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public async Task<bool> ConnectToDeviceAsync()
+        {
+            try
+            {
+                if (_handler == null)
+                {
+                    OnLogMessage?.Invoke("ERROR: Thor not initialized");
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke("Scanning for Samsung devices...");
+                var devices = _handler.GetDevices();
+                
+                if (devices.Count == 0)
+                {
+                    OnLogMessage?.Invoke("ERROR: No Samsung devices found in download mode");
+                    return false;
+                }
+                
+                // For GUI, we'll connect to the first device found
+                var device = devices[0];
+                OnLogMessage?.Invoke($"Found device: {device.DisplayName}");
+                OnLogMessage?.Invoke("Connecting to device...");
+                
+                _handler.Initialize(device.Identifier);
+                _isConnected = true;
+                
+                OnLogMessage?.Invoke("Device connected successfully!");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to connect to device: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public async Task<bool> BeginOdinSessionAsync()
+        {
+            try
+            {
+                if (!_isConnected || _handler == null)
+                {
+                    OnLogMessage?.Invoke("ERROR: No device connected");
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke("Starting Odin protocol session...");
+                _odinProtocol = new Odin(_handler);
+                
+                OnLogMessage?.Invoke("Performing handshake...");
+                _odinProtocol.Handshake();
+                
+                OnLogMessage?.Invoke("Beginning session...");
+                _odinProtocol.BeginSession();
+                
+                OnLogMessage?.Invoke($"Bootloader version: {_odinProtocol.Version.Version}");
+                OnLogMessage?.Invoke("Odin session established successfully!");
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to begin Odin session: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public async Task<bool> FlashFileAsync(string filePath, string partitionName)
+        {
+            try
+            {
+                if (_odinProtocol == null)
+                {
+                    OnLogMessage?.Invoke("ERROR: Odin session not established");
+                    return false;
+                }
+                
+                if (!File.Exists(filePath))
+                {
+                    OnLogMessage?.Invoke($"ERROR: File not found: {filePath}");
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke($"Preparing to flash {Path.GetFileName(filePath)}...");
+                
+                // Get PIT data to find partition
+                OnLogMessage?.Invoke("Dumping PIT data...");
+                var pitData = _odinProtocol.DumpPIT();
+                var pit = new PitData(pitData);
+                
+                // Find partition by name or filename
+                var fileName = Path.GetFileName(filePath);
+                var entry = pit.Entries.FirstOrDefault(x => 
+                    x.Partition.Equals(partitionName, StringComparison.OrdinalIgnoreCase) ||
+                    x.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+                
+                if (entry == null)
+                {
+                    OnLogMessage?.Invoke($"ERROR: Could not find partition for {fileName}");
+                    OnLogMessage?.Invoke("Available partitions:");
+                    foreach (var e in pit.Entries.Take(10)) // Show first 10
+                    {
+                        OnLogMessage?.Invoke($"  - {e.Partition} ({e.FileName})");
+                    }
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke($"Flashing to partition: {entry.Partition}");
+                
+                // Prepare file stream
+                var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+                Stream stream = fileStream;
+                
+                // Handle LZ4 compression
+                if (fileName.EndsWith(".lz4"))
+                {
+                    stream = LZ4Stream.Decode(fileStream);
+                    OnLogMessage?.Invoke("File is LZ4 compressed, decompressing...");
+                }
+                
+                // Set total bytes
+                _odinProtocol.SetTotalBytes(stream.Length);
+                
+                // Flash the partition
+                OnLogMessage?.Invoke($"Starting flash operation ({stream.Length} bytes)...");
+                var lastProgress = -1;
+                
+                _odinProtocol.FlashPartition(stream, entry, info =>
+                {
+                    var progress = (int)((info.SentBytes * 100) / info.TotalBytes);
+                    if (progress != lastProgress)
+                    {
+                        lastProgress = progress;
+                        var state = info.State == Odin.FlashProgressInfo.StateEnum.Sending ? "Sending" : "Flashing";
+                        OnProgress?.Invoke(progress, $"{state} sequence {info.SequenceIndex + 1}/{info.TotalSequences}");
+                    }
+                });
+                
+                stream.Dispose();
+                OnLogMessage?.Invoke($"Successfully flashed {Path.GetFileName(filePath)}!");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Flash operation failed: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public async Task<bool> EndSessionAndRebootAsync()
+        {
+            try
+            {
+                if (_odinProtocol != null)
+                {
+                    OnLogMessage?.Invoke("Ending Odin session...");
+                    _odinProtocol.EndSession();
+                    
+                    OnLogMessage?.Invoke("Rebooting device...");
+                    _odinProtocol.Reboot();
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to end session: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public void Disconnect()
+        {
+            try
+            {
+                _odinProtocol = null;
+                _handler?.Disconnect();
+                _isConnected = false;
+                OnLogMessage?.Invoke("Disconnected from device");
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to disconnect: {ex.Message}");
+            }
+        }
+    }
+    
     public class OdinMainWindow : Gtk.ApplicationWindow
     {
         // Flash tool selection
@@ -52,6 +300,10 @@ namespace Aesir
         private Gtk.Label deviceStatusLabel = null!;
         private Gtk.Label comPortLabel = null!;
         
+        // Thor flash manager
+        private ThorFlashManager? thorFlashManager = null!;
+        private Gtk.ProgressBar? progressBar = null!;
+        
         // ADB tab controls
         private Gtk.Label adbLogLabel = null!;
         private Gtk.Entry shellCommandEntry = null!;
@@ -71,6 +323,7 @@ namespace Aesir
             
             BuildUI();
             ConnectSignals();
+            InitializeThor();
             
             // Initialize Odin log
             LogMessage("Aesir - Firmware Flash Tool");
@@ -173,7 +426,7 @@ namespace Aesir
             progressBox.SetMarginStart(10);
             progressBox.SetMarginEnd(10);
             
-            var progressBar = Gtk.ProgressBar.New();
+            progressBar = Gtk.ProgressBar.New();
             progressBar.SetShowText(true);
             progressBar.SetText("Ready");
             progressBox.Append(progressBar);
@@ -803,7 +1056,195 @@ namespace Aesir
             }
         }
         
-        private void OnStartClicked(object? sender, EventArgs e)
+        private async void InitializeThor()
+        {
+            try
+            {
+                thorFlashManager = new ThorFlashManager();
+                thorFlashManager.OnLogMessage += (message) => LogMessage($"<THOR> {message}");
+                thorFlashManager.OnProgress += (percentage, message) =>
+                {
+                    // Update progress on UI thread
+                    if (progressBar != null)
+                    {
+                        progressBar.SetFraction(percentage / 100.0);
+                        progressBar.SetText($"{percentage}% - {message}");
+                    }
+                };
+                
+                LogMessage("<OSM> Thor flash manager initialized");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Failed to initialize Thor: {ex.Message}");
+            }
+        }
+        
+        private async Task<bool> PromptForSudoPassword()
+        {
+            try
+            {
+                LogMessage("<OSM> Thor requires root privileges for USB device access");
+                
+                // First check if zenity is available
+                var zenityCheck = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "which",
+                        Arguments = "zenity",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                zenityCheck.Start();
+                await zenityCheck.WaitForExitAsync();
+                
+                if (zenityCheck.ExitCode == 0)
+                {
+                    // Use zenity for password prompt
+                    LogMessage("<OSM> Using GUI password prompt");
+                    return await PromptSudoWithZenity();
+                }
+                else
+                {
+                    // Fall back to terminal prompt
+                    LogMessage("<OSM> Zenity not available, using terminal prompt");
+                    LogMessage("<OSM> Please enter your sudo password in the terminal when prompted");
+                    return await PromptSudoWithTerminal();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Sudo authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> PromptSudoWithZenity()
+        {
+            try
+            {
+                // Get password using zenity
+                var zenityProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "zenity",
+                        Arguments = "--password --title=\"Aesir - Sudo Authentication\" --text=\"Aesir requires root privileges to access USB devices.\\nPlease enter your password:\"",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                zenityProcess.Start();
+                var password = await zenityProcess.StandardOutput.ReadToEndAsync();
+                await zenityProcess.WaitForExitAsync();
+                
+                if (zenityProcess.ExitCode != 0)
+                {
+                    LogMessage("<OSM> User cancelled password dialog");
+                    return false;
+                }
+                
+                // Validate the password with sudo
+                var sudoProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "sudo",
+                        Arguments = "-S -v",
+                        UseShellExecute = false,
+                        RedirectStandardInput = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                sudoProcess.Start();
+                await sudoProcess.StandardInput.WriteLineAsync(password.Trim());
+                sudoProcess.StandardInput.Close();
+                await sudoProcess.WaitForExitAsync();
+                
+                if (sudoProcess.ExitCode == 0)
+                {
+                    LogMessage("<OSM> Sudo authentication successful");
+                    return true;
+                }
+                else
+                {
+                    LogMessage("<OSM> Sudo authentication failed - incorrect password");
+                    
+                    // Show error dialog
+                    var errorProcess = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "zenity",
+                            Arguments = "--error --title=\"Aesir - Authentication Failed\" --text=\"Incorrect password. Please try again.\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+                    errorProcess.Start();
+                    await errorProcess.WaitForExitAsync();
+                    
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Zenity authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> PromptSudoWithTerminal()
+        {
+            try
+            {
+                // Test sudo access by running a simple command
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "sudo",
+                        Arguments = "-v",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = false
+                    }
+                };
+                
+                process.Start();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    LogMessage("<OSM> Sudo authentication successful");
+                    return true;
+                }
+                else
+                {
+                    LogMessage("<OSM> Sudo authentication failed");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Terminal authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async void OnStartClicked(object? sender, EventArgs e)
         {
             LogMessage("");
             LogMessage($"<OSM> Firmware flashing started using {selectedFlashTool}...");
@@ -838,8 +1279,129 @@ namespace Aesir
             LogMessage($"<OSM> Checking device connection for {selectedFlashTool}...");
             deviceStatusLabel.SetText("Device Status: Checking connection...");
             
-            // Check for device connection using selected flash tool
-            CheckDeviceConnection();
+            // Handle different flash tools
+            if (selectedFlashTool == FlashTool.Thor)
+            {
+                await HandleThorFlashing();
+            }
+            else
+            {
+                // Check for device connection using selected flash tool
+                CheckDeviceConnection();
+            }
+        }
+        
+        private async Task HandleThorFlashing()
+        {
+            try
+            {
+                if (thorFlashManager == null)
+                {
+                    LogMessage("<OSM> ERROR: Thor flash manager not initialized");
+                    return;
+                }
+                
+                // Prompt for sudo password when start button is clicked
+                LogMessage("<OSM> Thor requires root privileges for USB device access");
+                if (!await PromptForSudoPassword())
+                {
+                    LogMessage("<OSM> ERROR: Root privileges required for Thor flashing");
+                    return;
+                }
+                
+                startButton.Sensitive = false;
+                
+                // Initialize Thor
+                LogMessage("<OSM> Initializing Thor library...");
+                if (!await thorFlashManager.InitializeAsync())
+                {
+                    LogMessage("<OSM> ERROR: Failed to initialize Thor library");
+                    startButton.Sensitive = true;
+                    return;
+                }
+                
+                // Connect to device
+                LogMessage("<OSM> Connecting to Samsung device...");
+                if (!await thorFlashManager.ConnectToDeviceAsync())
+                {
+                    LogMessage("<OSM> ERROR: Failed to connect to device");
+                    LogMessage("<OSM> Please ensure device is in download mode and connected via USB");
+                    startButton.Sensitive = true;
+                    return;
+                }
+                
+                deviceStatusLabel.SetText("Device Status: Connected (Thor)");
+                comPortLabel.SetText("Connection: USB (Thor)");
+                
+                // Begin Odin session
+                if (!await thorFlashManager.BeginOdinSessionAsync())
+                {
+                    LogMessage("<OSM> ERROR: Failed to establish Odin session");
+                    startButton.Sensitive = true;
+                    return;
+                }
+                
+                // Flash files in order: BL, AP, CP, CSC, USERDATA
+                var flashFiles = new[]
+                {
+                    ("BL", blFileEntry.GetText(), blCheckButton.Active),
+                    ("AP", apFileEntry.GetText(), apCheckButton.Active),
+                    ("CP", cpFileEntry.GetText(), cpCheckButton.Active),
+                    ("CSC", cscFileEntry.GetText(), cscCheckButton.Active),
+                    ("USERDATA", userdataFileEntry.GetText(), userdataCheckButton.Active)
+                };
+                
+                bool flashSuccess = true;
+                foreach (var (partition, filePath, enabled) in flashFiles)
+                {
+                    if (!enabled || string.IsNullOrEmpty(filePath))
+                        continue;
+                        
+                    LogMessage($"<OSM> Flashing {partition} partition...");
+                    if (!await thorFlashManager.FlashFileAsync(filePath, partition))
+                    {
+                        LogMessage($"<OSM> ERROR: Failed to flash {partition} partition");
+                        flashSuccess = false;
+                        break;
+                    }
+                }
+                
+                if (flashSuccess)
+                {
+                    LogMessage("<OSM> All files flashed successfully!");
+                    
+                    if (autoRebootCheck.Active)
+                    {
+                        LogMessage("<OSM> Auto-reboot enabled, rebooting device...");
+                        await thorFlashManager.EndSessionAndRebootAsync();
+                        LogMessage("<OSM> Device rebooted successfully!");
+                    }
+                    else
+                    {
+                        await thorFlashManager.EndSessionAndRebootAsync();
+                        LogMessage("<OSM> Flash completed. Please manually reboot your device.");
+                    }
+                    
+                    deviceStatusLabel.SetText("Device Status: Flash Complete");
+                    progressBar?.SetFraction(1.0);
+                    progressBar?.SetText("Flash Complete!");
+                }
+                else
+                {
+                    LogMessage("<OSM> Flash operation failed!");
+                    deviceStatusLabel.SetText("Device Status: Flash Failed");
+                }
+                
+                thorFlashManager.Disconnect();
+                startButton.Sensitive = true;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Thor flashing error: {ex.Message}");
+                deviceStatusLabel.SetText("Device Status: Error");
+                thorFlashManager?.Disconnect();
+                startButton.Sensitive = true;
+            }
         }
         
         private async void CheckDeviceConnection()
