@@ -5,3 +5,6 @@
 	path = FlashTools/Heimdall
 	url = https://git.sr.ht/~grimler/Heimdall
 	branch = master
+[submodule "FlashTools/OdinV4"]
+	path = FlashTools/OdinV4
+	url = https://github.com/Adrilaw/OdinV4
