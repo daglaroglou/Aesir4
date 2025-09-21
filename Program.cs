@@ -12,6 +12,9 @@ using TheAirBlow.Thor.Library.Communication;
 using TheAirBlow.Thor.Library.Protocols;
 using TheAirBlow.Thor.Library.PIT;
 using K4os.Compression.LZ4.Streams;
+using System.Formats.Tar;
+using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Aesir
 {
@@ -137,6 +140,106 @@ namespace Aesir
             }
         }
         
+
+        public async Task<bool> FlashTarFileAsync(string tarFilePath)
+        {
+            try
+            {
+                if (_odinProtocol == null)
+                {
+                    OnLogMessage?.Invoke("ERROR: Odin session not established");
+                    return false;
+                }
+                
+                if (!File.Exists(tarFilePath))
+                {
+                    OnLogMessage?.Invoke($"ERROR: TAR file not found: {tarFilePath}");
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke($"Processing TAR file: {Path.GetFileName(tarFilePath)}");
+                
+                // Get PIT data first
+                var pitData = _odinProtocol.DumpPIT();
+                var pit = new PitData(pitData);
+                
+                using var tar = new FileStream(tarFilePath, FileMode.Open, FileAccess.Read);
+                using var reader = new TarReader(tar);
+                
+                var totalBytes = 0L;
+                var entries = new List<(TarEntry entry, PitEntry pitEntry)>();
+                
+                // First pass: collect entries and calculate total size
+                while (reader.GetNextEntry() is { } entry)
+                {
+                    if (entry.DataStream == null || !string.IsNullOrEmpty(Path.GetDirectoryName(entry.Name)))
+                        continue;
+                        
+                    var pitEntry = pit.Entries.FirstOrDefault(x => 
+                        x.FileName.Equals(entry.Name, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (pitEntry != null)
+                    {
+                        entries.Add((entry, pitEntry));
+                        totalBytes += entry.Length;
+                    }
+                }
+                
+                if (entries.Count == 0)
+                {
+                    OnLogMessage?.Invoke("ERROR: No flashable files found in TAR");
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke($"Found {entries.Count} flashable files in TAR");
+                _odinProtocol.SetTotalBytes(totalBytes);
+                
+                // Second pass: flash each file
+                tar.Seek(0, SeekOrigin.Begin);
+                using var reader2 = new TarReader(tar);
+                
+                while (reader2.GetNextEntry() is { } entry)
+                {
+                    if (entry.DataStream == null) continue;
+                    
+                    var entryData = entries.FirstOrDefault(x => x.entry.Name == entry.Name);
+                    if (entryData.pitEntry == null) continue;
+                    
+                    OnLogMessage?.Invoke($"Flashing {entry.Name} to partition {entryData.pitEntry.Partition}");
+                    
+                    var stream = entry.DataStream;
+                    if (entry.Name.EndsWith(".lz4"))
+                    {
+                        stream = LZ4Stream.Decode(stream);
+                        OnLogMessage?.Invoke("File is LZ4 compressed, decompressing...");
+                    }
+                    
+                    var lastProgress = -1;
+                    _odinProtocol.FlashPartition(stream, entryData.pitEntry, info =>
+                    {
+                        var progress = (int)((info.SentBytes * 100) / info.TotalBytes);
+                        if (progress != lastProgress)
+                        {
+                            lastProgress = progress;
+                            var state = info.State == Odin.FlashProgressInfo.StateEnum.Sending ? "Sending" : "Flashing";
+                            OnProgress?.Invoke(progress, $"{state} {entry.Name} - sequence {info.SequenceIndex + 1}/{info.TotalSequences}");
+                        }
+                    });
+                    
+                    stream.Dispose();
+                    OnLogMessage?.Invoke($"Successfully flashed {entry.Name}");
+                }
+                
+                OnLogMessage?.Invoke($"TAR file flashed successfully!");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: TAR flash operation failed: {ex.Message}");
+                return false;
+            }
+        }
+
         public async Task<bool> FlashFileAsync(string filePath, string partitionName)
         {
             try
@@ -299,10 +402,22 @@ namespace Aesir
         private Gtk.Button resetButton = null!;
         private Gtk.Label deviceStatusLabel = null!;
         private Gtk.Label comPortLabel = null!;
+        private Gtk.Label timeLabel = null!;
         
         // Thor flash manager
         private ThorFlashManager? thorFlashManager = null!;
         private Gtk.ProgressBar? progressBar = null!;
+        
+        // Odin4 binary detection
+        private bool isOdin4Available = false;
+        private string odin4DevicePath = "";
+        
+        // Background services
+        private System.Threading.Timer? deviceCheckTimer = null;
+        private System.Threading.Timer? elapsedTimeTimer = null;
+        private DateTime flashStartTime = DateTime.Now;
+        private bool isFlashing = false;
+        
         
         // ADB tab controls
         private Gtk.Label adbLogLabel = null!;
@@ -324,13 +439,11 @@ namespace Aesir
             BuildUI();
             ConnectSignals();
             InitializeThor();
+            _ = CheckOdin4Availability(); // Fire and forget async call
             
             // Initialize Odin log
             LogMessage("Aesir - Firmware Flash Tool");
-            LogMessage($"<OSM> Default flash tool: {selectedFlashTool}");
             LogMessage("");
-            LogMessage("<OSM> Check device driver installation and device connection.");
-            LogMessage("<OSM> Waiting for device...");
             LogMessage("<OSM> WARNING: This tool can modify your device firmware!");
             LogMessage("<OSM> Use at your own risk and ensure you have proper backups.");
             
@@ -338,6 +451,12 @@ namespace Aesir
             LogAdbMessage("ADB interface initialized");
             LogAdbMessage("Ready for ADB commands...");
             LogAdbMessage("Make sure ADB is installed and device has USB debugging enabled.");
+            
+            // Start background services
+            StartBackgroundServices();
+            
+            // Connect destroy signal to cleanup background services
+            OnDestroy += OnWindowDestroy;
         }
         
         private void BuildUI()
@@ -382,12 +501,12 @@ namespace Aesir
             topGrid.SetMarginStart(10);
             topGrid.SetMarginEnd(10);
             
-            // Create file selection rows
-            CreateFileRow(topGrid, 0, "BL:", ref blFileEntry, ref blButton, ref blCheckButton);
-            CreateFileRow(topGrid, 1, "AP:", ref apFileEntry, ref apButton, ref apCheckButton);
-            CreateFileRow(topGrid, 2, "CP:", ref cpFileEntry, ref cpButton, ref cpCheckButton);
-            CreateFileRow(topGrid, 3, "CSC:", ref cscFileEntry, ref cscButton, ref cscCheckButton);
-            CreateFileRow(topGrid, 4, "USERDATA:", ref userdataFileEntry, ref userdataButton, ref userdataCheckButton);
+        // Create file selection rows
+        CreateFileRow(topGrid, 0, "BL:", ref blFileEntry, ref blButton, ref blCheckButton);
+        CreateFileRow(topGrid, 1, "AP:", ref apFileEntry, ref apButton, ref apCheckButton);
+        CreateFileRow(topGrid, 2, "CP:", ref cpFileEntry, ref cpButton, ref cpCheckButton);
+        CreateFileRow(topGrid, 3, "CSC:", ref cscFileEntry, ref cscButton, ref cscCheckButton);
+        CreateFileRow(topGrid, 4, "USERDATA:", ref userdataFileEntry, ref userdataButton, ref userdataCheckButton);
             
             topFrame.Child = topGrid;
             mainVBox.Append(topFrame);
@@ -435,7 +554,7 @@ namespace Aesir
             stepLabel.Xalign = 0;
             progressBox.Append(stepLabel);
             
-            var timeLabel = Gtk.Label.New("Elapsed: 00:00");
+            timeLabel = Gtk.Label.New("Elapsed: 00:00");
             timeLabel.Xalign = 0;
             progressBox.Append(timeLabel);
             
@@ -490,7 +609,6 @@ namespace Aesir
                 {
                     selectedFlashTool = (FlashTool)flashToolDropDown.GetSelected();
                     UpdateFlashToolLabel();
-                    LogMessage($"<OSM> Flash tool changed to: {selectedFlashTool}");
                 }
             };
             flashToolVBox.Append(flashToolDropDown);
@@ -574,6 +692,9 @@ namespace Aesir
             if (flashToolSelectedLabel != null)
             {
                 flashToolSelectedLabel.SetText($"Selected: {selectedFlashTool}");
+                
+                // Trigger device connection check when flash tool changes
+                CheckDeviceConnection();
             }
         }
         
@@ -974,10 +1095,12 @@ namespace Aesir
             
             // Add file filters
             var filter = Gtk.FileFilter.New();
-            filter.SetName("Firmware Files (*.tar.md5, *.img, *.bin)");
+            filter.SetName("Firmware Files (*.tar.md5, *.tar, *.img, *.bin, *.lz4)");
             filter.AddPattern("*.tar.md5");
+            filter.AddPattern("*.tar");
             filter.AddPattern("*.img");
             filter.AddPattern("*.bin");
+            filter.AddPattern("*.lz4");
             fileChooser.AddFilter(filter);
             
             var allFilter = Gtk.FileFilter.New();
@@ -995,7 +1118,14 @@ namespace Aesir
                     {
                         var path = file.GetPath();
                         entry.SetText(path ?? "");
-                        LogMessage($"<OSM> {partition} file selected: {Path.GetFileName(path ?? "")}");
+                        
+                        // Automatically check the corresponding checkbox when a file is selected
+                        var checkBox = GetCheckBoxForPartition(partition);
+                        if (checkBox != null)
+                        {
+                            checkBox.Active = true;
+                        }
+                        
                         CheckStartButtonState();
                     }
                 }
@@ -1044,6 +1174,19 @@ namespace Aesir
             fileChooser.Show();
         }
         
+        private Gtk.CheckButton? GetCheckBoxForPartition(string partition)
+        {
+            return partition.ToUpper() switch
+            {
+                "BL" => blCheckButton,
+                "AP" => apCheckButton,
+                "CP" => cpCheckButton,
+                "CSC" => cscCheckButton,
+                "USERDATA" => userdataCheckButton,
+                _ => null
+            };
+        }
+        
         private void CheckStartButtonState()
         {
             // Enable start button if at least AP file is selected
@@ -1052,7 +1195,6 @@ namespace Aesir
             
             if (canStart)
             {
-                LogMessage("<OSM> Ready to flash! Click Start to begin.");
             }
         }
         
@@ -1072,7 +1214,6 @@ namespace Aesir
                     }
                 };
                 
-                LogMessage("<OSM> Thor flash manager initialized");
             }
             catch (Exception ex)
             {
@@ -1247,7 +1388,6 @@ namespace Aesir
         private async void OnStartClicked(object? sender, EventArgs e)
         {
             LogMessage("");
-            LogMessage($"<OSM> Firmware flashing started using {selectedFlashTool}...");
             LogMessage("<OSM> Validating files...");
             
             // Validate file paths
@@ -1276,11 +1416,14 @@ namespace Aesir
                 return;
             }
             
-            LogMessage($"<OSM> Checking device connection for {selectedFlashTool}...");
             deviceStatusLabel.SetText("Device Status: Checking connection...");
             
-            // Handle different flash tools
-            if (selectedFlashTool == FlashTool.Thor)
+            // Check if Odin4 is available and use it preferentially
+            if (isOdin4Available)
+            {
+                await HandleOdin4Flashing(files);
+            }
+            else if (selectedFlashTool == FlashTool.Thor)
             {
                 await HandleThorFlashing();
             }
@@ -1291,13 +1434,57 @@ namespace Aesir
             }
         }
         
+        private async Task HandleOdin4Flashing(Dictionary<string, string> files)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(odin4DevicePath))
+                {
+                }
+                
+                // Start flashing timer
+                isFlashing = true;
+                flashStartTime = DateTime.Now;
+                
+                startButton.Sensitive = false;
+                deviceStatusLabel.SetText("Device Status: Flashing with Odin4");
+                
+                // Initialize progress bar
+                progressBar?.SetFraction(0.0);
+                progressBar?.SetText("Starting Odin4...");
+                
+                // Execute Odin4 command (will try without sudo first, then with sudo if needed)
+                var success = await ExecuteOdin4CommandWithFallback(files);
+                
+                if (success)
+                {
+                    deviceStatusLabel.SetText("Device Status: Flash Complete");
+                    progressBar?.SetFraction(1.0);
+                    progressBar?.SetText("Flash Complete!");
+                }
+                else
+                {
+                    deviceStatusLabel.SetText("Device Status: Flash Failed");
+                }
+                
+                // Stop flashing timer
+                isFlashing = false;
+                startButton.Sensitive = true;
+            }
+            catch (Exception)
+            {
+                deviceStatusLabel.SetText("Device Status: Error");
+                isFlashing = false;
+                startButton.Sensitive = true;
+            }
+        }
+        
         private async Task HandleThorFlashing()
         {
             try
             {
                 if (thorFlashManager == null)
                 {
-                    LogMessage("<OSM> ERROR: Thor flash manager not initialized");
                     return;
                 }
                 
@@ -1305,7 +1492,6 @@ namespace Aesir
                 LogMessage("<OSM> Thor requires root privileges for USB device access");
                 if (!await PromptForSudoPassword())
                 {
-                    LogMessage("<OSM> ERROR: Root privileges required for Thor flashing");
                     return;
                 }
                 
@@ -1315,7 +1501,6 @@ namespace Aesir
                 LogMessage("<OSM> Initializing Thor library...");
                 if (!await thorFlashManager.InitializeAsync())
                 {
-                    LogMessage("<OSM> ERROR: Failed to initialize Thor library");
                     startButton.Sensitive = true;
                     return;
                 }
@@ -1325,7 +1510,6 @@ namespace Aesir
                 if (!await thorFlashManager.ConnectToDeviceAsync())
                 {
                     LogMessage("<OSM> ERROR: Failed to connect to device");
-                    LogMessage("<OSM> Please ensure device is in download mode and connected via USB");
                     startButton.Sensitive = true;
                     return;
                 }
@@ -1340,6 +1524,10 @@ namespace Aesir
                     startButton.Sensitive = true;
                     return;
                 }
+                
+                // Start flashing timer
+                isFlashing = true;
+                flashStartTime = DateTime.Now;
                 
                 // Flash files in order: BL, AP, CP, CSC, USERDATA
                 var flashFiles = new[]
@@ -1357,12 +1545,25 @@ namespace Aesir
                     if (!enabled || string.IsNullOrEmpty(filePath))
                         continue;
                         
-                    LogMessage($"<OSM> Flashing {partition} partition...");
-                    if (!await thorFlashManager.FlashFileAsync(filePath, partition))
+                    
+                    // Odin4 TAR support: Check if file is a TAR file
+                    if (filePath.EndsWith(".tar") || filePath.EndsWith(".tar.md5"))
                     {
-                        LogMessage($"<OSM> ERROR: Failed to flash {partition} partition");
-                        flashSuccess = false;
-                        break;
+                        if (!await thorFlashManager.FlashTarFileAsync(filePath))
+                        {
+                            LogMessage($"<OSM> ERROR: Failed to flash TAR file {Path.GetFileName(filePath)}");
+                            flashSuccess = false;
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        if (!await thorFlashManager.FlashFileAsync(filePath, partition))
+                        {
+                            LogMessage($"<OSM> ERROR: Failed to flash {partition} partition");
+                            flashSuccess = false;
+                            break;
+                        }
                     }
                 }
                 
@@ -1379,7 +1580,6 @@ namespace Aesir
                     else
                     {
                         await thorFlashManager.EndSessionAndRebootAsync();
-                        LogMessage("<OSM> Flash completed. Please manually reboot your device.");
                     }
                     
                     deviceStatusLabel.SetText("Device Status: Flash Complete");
@@ -1388,18 +1588,18 @@ namespace Aesir
                 }
                 else
                 {
-                    LogMessage("<OSM> Flash operation failed!");
                     deviceStatusLabel.SetText("Device Status: Flash Failed");
                 }
                 
                 thorFlashManager.Disconnect();
+                isFlashing = false;
                 startButton.Sensitive = true;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                LogMessage($"<OSM> ERROR: Thor flashing error: {ex.Message}");
                 deviceStatusLabel.SetText("Device Status: Error");
                 thorFlashManager?.Disconnect();
+                isFlashing = false;
                 startButton.Sensitive = true;
             }
         }
@@ -1408,7 +1608,26 @@ namespace Aesir
         {
             try
             {
-                // Try to detect devices in download mode
+                // Use Odin4 device detection if available and selected
+                if (selectedFlashTool == FlashTool.Odin4 && isOdin4Available)
+                {
+                    odin4DevicePath = await GetOdin4DevicePath();
+                    
+                    if (!string.IsNullOrEmpty(odin4DevicePath))
+                    {
+                        deviceStatusLabel.SetText($"Device Status: Ready (Odin4)");
+                        comPortLabel.SetText($"Connection: {odin4DevicePath}");
+                        return;
+                    }
+                    else
+                    {
+                        deviceStatusLabel.SetText("Device Status: Not detected");
+                        comPortLabel.SetText("Connection: None");
+                        return;
+                    }
+                }
+
+                // Fallback to lsusb for other flash tools or when Odin4 is not available
                 var process = new Process
                 {
                     StartInfo = new ProcessStartInfo
@@ -1428,22 +1647,19 @@ namespace Aesir
                 // Check for Samsung device in download mode
                 if (output.Contains("04e8:") || output.Contains("Samsung"))
                 {
-                    LogMessage($"<OSM> Samsung device detected for {selectedFlashTool}!");
                     deviceStatusLabel.SetText($"Device Status: Ready ({selectedFlashTool})");
                     comPortLabel.SetText($"Connection: USB ({selectedFlashTool})");
-                    LogMessage($"<OSM> Ready to flash firmware using {selectedFlashTool}. WARNING: This will modify your device!");
                 }
                 else
                 {
-                    LogMessage($"<OSM> No Samsung device detected for {selectedFlashTool}.");
-                    LogMessage($"<OSM> Please ensure device is in download mode and connected via USB for {selectedFlashTool}.");
                     deviceStatusLabel.SetText("Device Status: Not detected");
+                    comPortLabel.SetText("Connection: None");
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                LogMessage($"<OSM> Error checking device connection: {ex.Message}");
                 deviceStatusLabel.SetText("Device Status: Error");
+                comPortLabel.SetText("Connection: Error");
             }
         }
         
@@ -1474,6 +1690,468 @@ namespace Aesir
             LogMessage("");
             LogMessage("<OSM> All settings reset to default.");
         }
+        
+        private async Task CheckOdin4Availability()
+        {
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "which",
+                        Arguments = "odin4",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                isOdin4Available = process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output);
+                
+                if (isOdin4Available)
+                {
+                }
+                else
+                {
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> Error checking for Odin4: {ex.Message}");
+                isOdin4Available = false;
+            }
+        }
+        
+        private async Task<string> GetOdin4DevicePath()
+        {
+            try
+            {
+                if (!isOdin4Available)
+                {
+                    return "";
+                }
+
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "odin4",
+                        Arguments = "-l",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
+                {
+                    // odin4 -l typically returns the device path, parse it
+                    var devicePath = output.Trim();
+                    return devicePath;
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(error))
+                    {
+                        LogMessage($"<OSM> Odin4 -l error: {error.Trim()}");
+                    }
+                    return "";
+                }
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+        }
+        
+        private async Task<bool> PromptForSudoPasswordForOdin4()
+        {
+            try
+            {
+                LogMessage("<OSM> Odin4 requires root privileges");
+                
+                // First check if zenity is available
+                var zenityCheck = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "which",
+                        Arguments = "zenity",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                zenityCheck.Start();
+                await zenityCheck.WaitForExitAsync();
+                
+                if (zenityCheck.ExitCode == 0)
+                {
+                    // Use zenity for password prompt
+                    LogMessage("<OSM> Using GUI password prompt");
+                    return await PromptSudoWithZenityForOdin4();
+                }
+                else
+                {
+                    // Fall back to terminal prompt
+                    LogMessage("<OSM> Zenity not available, using terminal prompt");
+                    LogMessage("<OSM> Please enter your sudo password in the terminal when prompted");
+                    return await PromptSudoWithTerminalForOdin4();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Sudo authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> PromptSudoWithZenityForOdin4()
+        {
+            try
+            {
+                // Get password using zenity
+                var zenityProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "zenity",
+                        Arguments = "--password --title=\"Aesir - Sudo Authentication\" --text=\"Odin4 requires root privileges to access USB devices.\\nPlease enter your password:\"",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                zenityProcess.Start();
+                var password = await zenityProcess.StandardOutput.ReadToEndAsync();
+                await zenityProcess.WaitForExitAsync();
+                
+                if (zenityProcess.ExitCode != 0)
+                {
+                    LogMessage("<OSM> User cancelled password dialog");
+                    return false;
+                }
+                
+                // Validate the password with sudo
+                var sudoProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "sudo",
+                        Arguments = "-S -v",
+                        UseShellExecute = false,
+                        RedirectStandardInput = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                sudoProcess.Start();
+                await sudoProcess.StandardInput.WriteLineAsync(password.Trim());
+                sudoProcess.StandardInput.Close();
+                await sudoProcess.WaitForExitAsync();
+                
+                if (sudoProcess.ExitCode == 0)
+                {
+                    LogMessage("<OSM> Sudo authentication successful");
+                    return true;
+                }
+                else
+                {
+                    LogMessage("<OSM> Sudo authentication failed - incorrect password");
+                    
+                    // Show error dialog
+                    var errorProcess = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "zenity",
+                            Arguments = "--error --title=\"Aesir - Authentication Failed\" --text=\"Incorrect password. Please try again.\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+                    errorProcess.Start();
+                    await errorProcess.WaitForExitAsync();
+                    
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Zenity authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> PromptSudoWithTerminalForOdin4()
+        {
+            try
+            {
+                // Test sudo access by running a simple command
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "sudo",
+                        Arguments = "-v",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = false
+                    }
+                };
+                
+                process.Start();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    LogMessage("<OSM> Sudo authentication successful");
+                    return true;
+                }
+                else
+                {
+                    LogMessage("<OSM> Sudo authentication failed");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Terminal authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> ExecuteOdin4CommandWithFallback(Dictionary<string, string> files)
+        {
+            try
+            {
+                var odin4Args = new List<string>();
+                
+                // Add file arguments based on Odin4 flags
+                if (!string.IsNullOrEmpty(files["BL"]) && blCheckButton.Active)
+                {
+                    odin4Args.Add($"-b \"{files["BL"]}\"");
+                }
+                
+                if (!string.IsNullOrEmpty(files["AP"]) && apCheckButton.Active)
+                {
+                    odin4Args.Add($"-a \"{files["AP"]}\"");
+                }
+                
+                if (!string.IsNullOrEmpty(files["CP"]) && cpCheckButton.Active)
+                {
+                    odin4Args.Add($"-c \"{files["CP"]}\"");
+                }
+                
+                if (!string.IsNullOrEmpty(files["CSC"]) && cscCheckButton.Active)
+                {
+                    odin4Args.Add($"-s \"{files["CSC"]}\"");
+                }
+                
+                if (!string.IsNullOrEmpty(files["USERDATA"]) && userdataCheckButton.Active)
+                {
+                    odin4Args.Add($"-u \"{files["USERDATA"]}\"");
+                }
+                
+                if (odin4Args.Count == 0)
+                {
+                    return false;
+                }
+                
+                // Add device path if available
+                if (!string.IsNullOrEmpty(odin4DevicePath))
+                {
+                    odin4Args.Add($"-d \"{odin4DevicePath}\"");
+                }
+                
+                var commandArgs = string.Join(" ", odin4Args);
+                
+                // First try without sudo
+                var success = await TryExecuteOdin4(false, commandArgs);
+                
+                if (!success)
+                {
+                    
+                    // Prompt for sudo password
+                    if (!await PromptForSudoPasswordForOdin4())
+                    {
+                        LogMessage("<OSM> ERROR: Root privileges required for Odin4");
+                        return false;
+                    }
+                    
+                    LogMessage("<OSM> Trying with sudo...");
+                    success = await TryExecuteOdin4(true, commandArgs);
+                }
+                
+                return success;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Failed to execute Odin4: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> TryExecuteOdin4(bool useSudo, string commandArgs)
+        {
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = useSudo ? "sudo" : "odin4",
+                        Arguments = useSudo ? $"odin4 {commandArgs}" : commandArgs,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.OutputDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        // Parse progress and update progress bar
+                        if (TryParseOdin4Progress(e.Data, out var progress, out var message))
+                        {
+                            progressBar?.SetFraction(progress / 100.0);
+                            progressBar?.SetText($"{progress}% - {message}");
+                        }
+                        else
+                        {
+                            // Only log non-progress messages
+                            LogMessage($"<ODIN4> {e.Data}");
+                        }
+                    }
+                };
+                
+                process.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        // Check for permission errors
+                        if (e.Data.Contains("permission") || e.Data.Contains("access") || 
+                            e.Data.Contains("denied") || e.Data.Contains("root"))
+                        {
+                            LogMessage($"<ODIN4> Permission issue: {e.Data}");
+                        }
+                        else
+                        {
+                            LogMessage($"<ODIN4> {e.Data}");
+                        }
+                    }
+                };
+                
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    return true;
+                }
+                else
+                {
+                    LogMessage($"<OSM> Odin4 execution failed {(useSudo ? "with sudo" : "without sudo")} - exit code {process.ExitCode}");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Failed to execute Odin4 {(useSudo ? "with sudo" : "without sudo")}: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private bool TryParseOdin4Progress(string output, out int progress, out string message)
+        {
+            progress = 0;
+            message = "";
+            
+            try
+            {
+                // Odin4 typically outputs progress in formats like:
+                // "Progress: 45%"
+                // "Downloading... 67%"
+                // "Flashing: 89%"
+                // "[45%] Flashing partition"
+                
+                // Try different progress patterns
+                var patterns = new[]
+                {
+                    @"(\d+)%",                          // Simple percentage
+                    @"Progress:\s*(\d+)%",              // "Progress: 45%"
+                    @"Downloading\.\.\.\s*(\d+)%",      // "Downloading... 67%"
+                    @"Flashing:\s*(\d+)%",              // "Flashing: 89%"
+                    @"\[(\d+)%\]",                      // "[45%]"
+                    @"(\d+)%\s*-\s*(.+)"                // "45% - Flashing partition"
+                };
+                
+                foreach (var pattern in patterns)
+                {
+                    var match = Regex.Match(output, pattern);
+                    if (match.Success)
+                    {
+                        if (int.TryParse(match.Groups[1].Value, out progress))
+                        {
+                            // Extract message if available
+                            if (match.Groups.Count > 2 && !string.IsNullOrEmpty(match.Groups[2].Value))
+                            {
+                                message = match.Groups[2].Value.Trim();
+                            }
+                            else
+                            {
+                                // Extract operation from common patterns
+                                if (output.Contains("Downloading"))
+                                    message = "Downloading";
+                                else if (output.Contains("Flashing"))
+                                    message = "Flashing";
+                                else if (output.Contains("Progress"))
+                                    message = "Processing";
+                                else
+                                    message = "Working";
+                            }
+                            
+                            // Only consider it progress if percentage is reasonable
+                            if (progress >= 0 && progress <= 100)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        
         
         // Helper method to run ADB commands
         private async Task<string> RunAdbCommand(string arguments)
@@ -1937,6 +2615,69 @@ namespace Aesir
                 adbLogMessages.RemoveAt(0);
             }
             adbLogLabel.SetText(string.Join("\n", adbLogMessages));
+        }
+        
+        private void StartBackgroundServices()
+        {
+            // Start device check timer - check every 3 seconds
+            deviceCheckTimer = new System.Threading.Timer(DeviceCheckCallback, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3));
+            
+            // Start elapsed time timer - update every second
+            elapsedTimeTimer = new System.Threading.Timer(ElapsedTimeCallback, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+        
+        private void DeviceCheckCallback(object? state)
+        {
+            // Schedule on main thread using Task.Run
+            Task.Run(async () =>
+            {
+                if (!isFlashing) // Only check when not flashing to avoid interference
+                {
+                    try
+                    {
+                        CheckDeviceConnection();
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"<OSM> Background device check error: {ex.Message}");
+                    }
+                }
+            });
+        }
+        
+        private void ElapsedTimeCallback(object? state)
+        {
+            // Update elapsed time - this should be thread-safe for simple UI updates
+            try
+            {
+                if (isFlashing)
+                {
+                    var elapsed = DateTime.Now - flashStartTime;
+                    var elapsedStr = $"{elapsed.Minutes:D2}:{elapsed.Seconds:D2}";
+                    timeLabel?.SetText($"Elapsed: {elapsedStr}");
+                }
+                else
+                {
+                    timeLabel?.SetText("Elapsed: 00:00");
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore UI update errors in background timer
+            }
+        }
+        
+        private void StopBackgroundServices()
+        {
+            deviceCheckTimer?.Dispose();
+            elapsedTimeTimer?.Dispose();
+            deviceCheckTimer = null;
+            elapsedTimeTimer = null;
+        }
+        
+        private void OnWindowDestroy(object? sender, EventArgs e)
+        {
+            StopBackgroundServices();
         }
     }
     
