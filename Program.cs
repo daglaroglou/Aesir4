@@ -425,14 +425,22 @@ namespace Aesir
         private Gtk.Entry packageNameEntry = null!;
         private Gtk.Entry packagePathEntry = null!;
         
+        // Fastboot tab controls
+        private Gtk.Label fastbootLogLabel = null!;
+        private Gtk.Entry fastbootCommandEntry = null!;
+        private Gtk.Entry fastbootImagePathEntry = null!;
+        private Gtk.Entry fastbootPartitionEntry = null!;
+        
         // Log storage
         private List<string> odinLogMessages = new List<string>();
         private List<string> adbLogMessages = new List<string>();
+        private List<string> fastbootLogMessages = new List<string>();
 
         public OdinMainWindow(Gtk.Application application) : base()
         {
             Application = application;
             Title = "Aesir - Firmware Flash Tool";
+            
             SetDefaultSize(1000, 700);
             Resizable = true;
             
@@ -451,6 +459,11 @@ namespace Aesir
             LogAdbMessage("ADB interface initialized");
             LogAdbMessage("Ready for ADB commands...");
             LogAdbMessage("Make sure ADB is installed and device has USB debugging enabled.");
+            
+            // Initialize Fastboot log
+            LogFastbootMessage("Fastboot interface initialized");
+            LogFastbootMessage("Ready for Fastboot commands...");
+            LogFastbootMessage("Make sure Fastboot is installed and device is in bootloader mode.");
             
             // Start background services
             StartBackgroundServices();
@@ -471,6 +484,10 @@ namespace Aesir
             // Create ADB Tab
             var adbTab = CreateAdbTab();
             notebook.AppendPage(adbTab, Gtk.Label.New("ADB"));
+            
+            // Create Fastboot Tab
+            var fastbootTab = CreateFastbootTab();
+            notebook.AppendPage(fastbootTab, Gtk.Label.New("Fastboot"));
             
             // Create GAPPS Tab
             var gappsTab = CreateGappsTab();
@@ -880,6 +897,211 @@ namespace Aesir
             return mainVBox;
         }
         
+        private Gtk.Widget CreateFastbootTab()
+        {
+            var mainVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
+            mainVBox.SetMarginTop(10);
+            mainVBox.SetMarginBottom(10);
+            mainVBox.SetMarginStart(10);
+            mainVBox.SetMarginEnd(10);
+            
+            // Top section - Image Flashing (similar to file selection in Odin)
+            var topFrame = Gtk.Frame.New("Image Flashing");
+            var topGrid = Gtk.Grid.New();
+            topGrid.SetRowSpacing(8);
+            topGrid.SetColumnSpacing(10);
+            topGrid.SetMarginTop(10);
+            topGrid.SetMarginBottom(10);
+            topGrid.SetMarginStart(10);
+            topGrid.SetMarginEnd(10);
+            
+            // Image Flash row
+            var imageLabel = Gtk.Label.New("Image File:");
+            imageLabel.Xalign = 0;
+            imageLabel.SetSizeRequest(80, -1);
+            topGrid.Attach(imageLabel, 0, 0, 1, 1);
+            
+            fastbootImagePathEntry = Gtk.Entry.New();
+            fastbootImagePathEntry.PlaceholderText = "Select image file to flash";
+            fastbootImagePathEntry.SetHexpand(true);
+            topGrid.Attach(fastbootImagePathEntry, 1, 0, 1, 1);
+            
+            var browseImageButton = Gtk.Button.NewWithLabel("...");
+            browseImageButton.SetSizeRequest(40, -1);
+            browseImageButton.OnClicked += (sender, e) => BrowseForFile(fastbootImagePathEntry, "Select Image File", "*.img");
+            topGrid.Attach(browseImageButton, 2, 0, 1, 1);
+            
+            // Partition row
+            var partitionLabel = Gtk.Label.New("Partition:");
+            partitionLabel.Xalign = 0;
+            partitionLabel.SetSizeRequest(80, -1);
+            topGrid.Attach(partitionLabel, 0, 1, 1, 1);
+            
+            fastbootPartitionEntry = Gtk.Entry.New();
+            fastbootPartitionEntry.PlaceholderText = "boot, recovery, system, etc.";
+            fastbootPartitionEntry.SetHexpand(true);
+            topGrid.Attach(fastbootPartitionEntry, 1, 1, 1, 1);
+            
+            var flashButton = Gtk.Button.NewWithLabel("Flash");
+            flashButton.OnClicked += async (sender, e) => await FlashImage(fastbootImagePathEntry.GetText(), fastbootPartitionEntry.GetText());
+            topGrid.Attach(flashButton, 2, 1, 1, 1);
+            
+            // Custom Command row
+            var commandLabel = Gtk.Label.New("Command:");
+            commandLabel.Xalign = 0;
+            commandLabel.SetSizeRequest(80, -1);
+            topGrid.Attach(commandLabel, 0, 2, 1, 1);
+            
+            fastbootCommandEntry = Gtk.Entry.New();
+            fastbootCommandEntry.PlaceholderText = "Enter fastboot command";
+            fastbootCommandEntry.SetHexpand(true);
+            topGrid.Attach(fastbootCommandEntry, 1, 2, 1, 1);
+            
+            var executeButton = Gtk.Button.NewWithLabel("Execute");
+            executeButton.OnClicked += async (sender, e) => await ExecuteFastbootCommand(fastbootCommandEntry.GetText());
+            topGrid.Attach(executeButton, 2, 2, 1, 1);
+            
+            topFrame.Child = topGrid;
+            mainVBox.Append(topFrame);
+            
+            // Middle section - Four frames side by side
+            var middleHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
+            
+            // Left side - Device Information
+            var deviceFrame = Gtk.Frame.New("Device Information");
+            var deviceVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 5);
+            deviceVBox.SetMarginTop(10);
+            deviceVBox.SetMarginBottom(10);
+            deviceVBox.SetMarginStart(10);
+            deviceVBox.SetMarginEnd(10);
+            
+            var refreshFastbootDevicesButton = Gtk.Button.NewWithLabel("Refresh Devices");
+            refreshFastbootDevicesButton.OnClicked += async (sender, e) => await RefreshFastbootDevices();
+            deviceVBox.Append(refreshFastbootDevicesButton);
+            
+            var getDeviceVarsButton = Gtk.Button.NewWithLabel("Get Device Variables");
+            getDeviceVarsButton.OnClicked += async (sender, e) => await GetDeviceVariables();
+            deviceVBox.Append(getDeviceVarsButton);
+            
+            var getBootloaderVersionButton = Gtk.Button.NewWithLabel("Bootloader Version");
+            getBootloaderVersionButton.OnClicked += async (sender, e) => await GetBootloaderVersion();
+            deviceVBox.Append(getBootloaderVersionButton);
+            
+            var getSerialNumberButton = Gtk.Button.NewWithLabel("Serial Number");
+            getSerialNumberButton.OnClicked += async (sender, e) => await GetSerialNumber();
+            deviceVBox.Append(getSerialNumberButton);
+            
+            deviceFrame.Child = deviceVBox;
+            middleHBox.Append(deviceFrame);
+            
+            // Middle-left - Bootloader Operations
+            var bootloaderFrame = Gtk.Frame.New("Bootloader Operations");
+            var bootloaderVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 5);
+            bootloaderVBox.SetMarginTop(10);
+            bootloaderVBox.SetMarginBottom(10);
+            bootloaderVBox.SetMarginStart(10);
+            bootloaderVBox.SetMarginEnd(10);
+            
+            var unlockBootloaderButton = Gtk.Button.NewWithLabel("Unlock Bootloader");
+            unlockBootloaderButton.OnClicked += async (sender, e) => await UnlockBootloader();
+            bootloaderVBox.Append(unlockBootloaderButton);
+            
+            var lockBootloaderButton = Gtk.Button.NewWithLabel("Lock Bootloader");
+            lockBootloaderButton.OnClicked += async (sender, e) => await LockBootloader();
+            bootloaderVBox.Append(lockBootloaderButton);
+            
+            var oemUnlockButton = Gtk.Button.NewWithLabel("OEM Unlock");
+            oemUnlockButton.OnClicked += async (sender, e) => await OemUnlock();
+            bootloaderVBox.Append(oemUnlockButton);
+            
+            var getCriticalUnlockButton = Gtk.Button.NewWithLabel("Get Critical Unlock");
+            getCriticalUnlockButton.OnClicked += async (sender, e) => await GetCriticalUnlock();
+            bootloaderVBox.Append(getCriticalUnlockButton);
+            
+            bootloaderFrame.Child = bootloaderVBox;
+            middleHBox.Append(bootloaderFrame);
+            
+            // Middle-right - Partition Operations
+            var partitionFrame = Gtk.Frame.New("Partition Operations");
+            var partitionVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 5);
+            partitionVBox.SetMarginTop(10);
+            partitionVBox.SetMarginBottom(10);
+            partitionVBox.SetMarginStart(10);
+            partitionVBox.SetMarginEnd(10);
+            
+            var eraseSystemButton = Gtk.Button.NewWithLabel("Erase System");
+            eraseSystemButton.OnClicked += async (sender, e) => await ErasePartition("system");
+            partitionVBox.Append(eraseSystemButton);
+            
+            var eraseUserdataButton = Gtk.Button.NewWithLabel("Erase Userdata");
+            eraseUserdataButton.OnClicked += async (sender, e) => await ErasePartition("userdata");
+            partitionVBox.Append(eraseUserdataButton);
+            
+            var eraseCacheButton = Gtk.Button.NewWithLabel("Erase Cache");
+            eraseCacheButton.OnClicked += async (sender, e) => await ErasePartition("cache");
+            partitionVBox.Append(eraseCacheButton);
+            
+            var formatUserdataButton = Gtk.Button.NewWithLabel("Format Userdata");
+            formatUserdataButton.OnClicked += async (sender, e) => await FormatPartition("userdata");
+            partitionVBox.Append(formatUserdataButton);
+            
+            partitionFrame.Child = partitionVBox;
+            middleHBox.Append(partitionFrame);
+            
+            // Right side - Reboot Operations
+            var rebootFrame = Gtk.Frame.New("Reboot Operations");
+            var rebootVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 5);
+            rebootVBox.SetMarginTop(10);
+            rebootVBox.SetMarginBottom(10);
+            rebootVBox.SetMarginStart(10);
+            rebootVBox.SetMarginEnd(10);
+            
+            var rebootSystemButton = Gtk.Button.NewWithLabel("Reboot System");
+            rebootSystemButton.OnClicked += async (sender, e) => await FastbootRebootSystem();
+            rebootVBox.Append(rebootSystemButton);
+            
+            var rebootBootloaderButton = Gtk.Button.NewWithLabel("Reboot Bootloader");
+            rebootBootloaderButton.OnClicked += async (sender, e) => await FastbootRebootBootloader();
+            rebootVBox.Append(rebootBootloaderButton);
+            
+            var rebootRecoveryButton = Gtk.Button.NewWithLabel("Reboot Recovery");
+            rebootRecoveryButton.OnClicked += async (sender, e) => await FastbootRebootRecovery();
+            rebootVBox.Append(rebootRecoveryButton);
+            
+            var rebootFastbootButton = Gtk.Button.NewWithLabel("Reboot Fastboot");
+            rebootFastbootButton.OnClicked += async (sender, e) => await FastbootRebootFastboot();
+            rebootVBox.Append(rebootFastbootButton);
+            
+            rebootFrame.Child = rebootVBox;
+            middleHBox.Append(rebootFrame);
+            
+            mainVBox.Append(middleHBox);
+            
+            // Bottom section - Log output (matching Odin structure)
+            var fastbootLogFrame = Gtk.Frame.New("Fastboot Output");
+            var fastbootLogScrolled = Gtk.ScrolledWindow.New();
+            fastbootLogScrolled.SetPolicy(Gtk.PolicyType.Automatic, Gtk.PolicyType.Automatic);
+            fastbootLogScrolled.SetVexpand(true); // Allow vertical expansion
+            fastbootLogScrolled.SetHexpand(true); // Allow horizontal expansion
+            
+            fastbootLogLabel = Gtk.Label.New("");
+            fastbootLogLabel.Xalign = 0;
+            fastbootLogLabel.Yalign = 0;
+            fastbootLogLabel.AddCssClass("monospace");
+            fastbootLogLabel.SetSelectable(true);
+            fastbootLogLabel.SetWrapMode(Pango.WrapMode.Word);
+            
+            fastbootLogScrolled.Child = fastbootLogLabel;
+            fastbootLogFrame.Child = fastbootLogScrolled;
+            
+            // Make the log frame expand to fill remaining space
+            fastbootLogFrame.SetVexpand(true);
+            fastbootLogFrame.SetHexpand(true);
+            mainVBox.Append(fastbootLogFrame);
+            
+            return mainVBox;
+        }
+        
         private Gtk.Widget CreateGappsTab()
         {
             var mainVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
@@ -1075,11 +1297,37 @@ namespace Aesir
             startButton.OnClicked += OnStartClicked;
             resetButton.OnClicked += OnResetClicked;
             
+            // Checkbox toggle events
+            blCheckButton.OnToggled += (sender, e) => CheckStartButtonState();
+            apCheckButton.OnToggled += (sender, e) => CheckStartButtonState();
+            cpCheckButton.OnToggled += (sender, e) => CheckStartButtonState();
+            cscCheckButton.OnToggled += (sender, e) => CheckStartButtonState();
+            userdataCheckButton.OnToggled += (sender, e) => CheckStartButtonState();
+            
             // Entry change events using notify::text property
+            blFileEntry.OnNotify += (sender, e) => {
+                if (e.Pspec.GetName() == "text")
+                    CheckStartButtonState();
+            };
             apFileEntry.OnNotify += (sender, e) => {
                 if (e.Pspec.GetName() == "text")
                     CheckStartButtonState();
             };
+            cpFileEntry.OnNotify += (sender, e) => {
+                if (e.Pspec.GetName() == "text")
+                    CheckStartButtonState();
+            };
+            cscFileEntry.OnNotify += (sender, e) => {
+                if (e.Pspec.GetName() == "text")
+                    CheckStartButtonState();
+            };
+            userdataFileEntry.OnNotify += (sender, e) => {
+                if (e.Pspec.GetName() == "text")
+                    CheckStartButtonState();
+            };
+            
+            // Initialize start button state
+            CheckStartButtonState();
         }
         
         private void OnFileButtonClicked(string partition, Gtk.Entry entry)
@@ -1189,13 +1437,17 @@ namespace Aesir
         
         private void CheckStartButtonState()
         {
-            // Enable start button if at least AP file is selected
-            bool canStart = !string.IsNullOrEmpty(apFileEntry.GetText());
-            startButton.Sensitive = canStart;
+            // Enable start button if at least one checkbox is ticked and has a file attached
+            bool canStart = false;
             
-            if (canStart)
-            {
-            }
+            // Check each partition: checkbox must be active AND file must be selected
+            if (blCheckButton.Active && !string.IsNullOrEmpty(blFileEntry.GetText())) canStart = true;
+            if (apCheckButton.Active && !string.IsNullOrEmpty(apFileEntry.GetText())) canStart = true;
+            if (cpCheckButton.Active && !string.IsNullOrEmpty(cpFileEntry.GetText())) canStart = true;
+            if (cscCheckButton.Active && !string.IsNullOrEmpty(cscFileEntry.GetText())) canStart = true;
+            if (userdataCheckButton.Active && !string.IsNullOrEmpty(userdataFileEntry.GetText())) canStart = true;
+            
+            startButton.Sensitive = canStart;
         }
         
         private async void InitializeThor()
@@ -1671,6 +1923,13 @@ namespace Aesir
             cpFileEntry.SetText("");
             cscFileEntry.SetText("");
             userdataFileEntry.SetText("");
+            
+            // Uncheck all partition checkboxes
+            blCheckButton.Active = false;
+            apCheckButton.Active = false;
+            cpCheckButton.Active = false;
+            cscCheckButton.Active = false;
+            userdataCheckButton.Active = false;
             
             // Reset options
             autoRebootCheck.Active = true;
@@ -2189,6 +2448,42 @@ namespace Aesir
             }
         }
         
+        // Helper method to run Fastboot commands
+        private async Task<string> RunFastbootCommand(string arguments)
+        {
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "fastboot",
+                        Arguments = arguments,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode != 0 && !string.IsNullOrEmpty(error))
+                {
+                    return $"Error: {error}";
+                }
+                
+                return output;
+            }
+            catch (Exception ex)
+            {
+                return $"Error running Fastboot: {ex.Message}";
+            }
+        }
+        
         // ADB Methods
         private async Task RefreshAdbDevices()
         {
@@ -2595,6 +2890,345 @@ namespace Aesir
             }
         }
         
+        // Fastboot Methods
+        private async Task RefreshFastbootDevices()
+        {
+            LogFastbootMessage("Refreshing Fastboot devices...");
+            LogFastbootMessage("$ fastboot devices");
+            
+            var output = await RunFastbootCommand("devices");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+                LogFastbootMessage("Make sure Fastboot is installed and device is in bootloader mode");
+                return;
+            }
+            
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            if (lines.Length == 0)
+            {
+                LogFastbootMessage("No fastboot devices found");
+                LogFastbootMessage("Make sure device is in bootloader/fastboot mode");
+            }
+            else
+            {
+                LogFastbootMessage("Connected fastboot devices:");
+                foreach (var line in lines)
+                {
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        LogFastbootMessage($"  {line.Trim()}");
+                    }
+                }
+            }
+        }
+        
+        private async Task GetDeviceVariables()
+        {
+            LogFastbootMessage("Getting device variables...");
+            
+            var variables = new[]
+            {
+                "version", "version-bootloader", "version-baseband", "product", 
+                "serialno", "secure", "unlocked", "charge-state", "max-download-size",
+                "partition-type:system", "partition-size:system", "partition-type:userdata",
+                "partition-size:userdata"
+            };
+            
+            foreach (var variable in variables)
+            {
+                var output = await RunFastbootCommand($"getvar {variable}");
+                if (!output.StartsWith("Error"))
+                {
+                    LogFastbootMessage($"{variable}: {output.Trim()}");
+                }
+            }
+        }
+        
+        private async Task GetBootloaderVersion()
+        {
+            LogFastbootMessage("Getting bootloader version...");
+            LogFastbootMessage("$ fastboot getvar version-bootloader");
+            
+            var output = await RunFastbootCommand("getvar version-bootloader");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage($"Bootloader version: {output.Trim()}");
+            }
+        }
+        
+        private async Task GetSerialNumber()
+        {
+            LogFastbootMessage("Getting device serial number...");
+            LogFastbootMessage("$ fastboot getvar serialno");
+            
+            var output = await RunFastbootCommand("getvar serialno");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage($"Serial number: {output.Trim()}");
+            }
+        }
+        
+        private async Task FlashImage(string imagePath, string partition)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath))
+            {
+                LogFastbootMessage("Please select an image file to flash");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(partition))
+            {
+                LogFastbootMessage("Please specify a partition name");
+                return;
+            }
+            
+            if (!File.Exists(imagePath))
+            {
+                LogFastbootMessage($"Image file not found: {imagePath}");
+                return;
+            }
+            
+            LogFastbootMessage($"Flashing {imagePath} to {partition} partition...");
+            LogFastbootMessage($"$ fastboot flash {partition} \"{imagePath}\"");
+            
+            var output = await RunFastbootCommand($"flash {partition} \"{imagePath}\"");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage($"Successfully flashed {partition} partition");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task ExecuteFastbootCommand(string command)
+        {
+            if (string.IsNullOrWhiteSpace(command))
+            {
+                LogFastbootMessage("Please enter a fastboot command");
+                return;
+            }
+            
+            LogFastbootMessage($"Executing custom command...");
+            LogFastbootMessage($"$ fastboot {command}");
+            
+            var output = await RunFastbootCommand(command);
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage("Command executed successfully:");
+                if (!string.IsNullOrWhiteSpace(output))
+                {
+                    var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines)
+                    {
+                        LogFastbootMessage(line.Trim());
+                    }
+                }
+            }
+        }
+        
+        private async Task UnlockBootloader()
+        {
+            LogFastbootMessage("WARNING: Unlocking bootloader will void warranty and erase all data!");
+            LogFastbootMessage("$ fastboot flashing unlock");
+            
+            var output = await RunFastbootCommand("flashing unlock");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage("Bootloader unlock command sent");
+                LogFastbootMessage("Please confirm on device if prompted");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task LockBootloader()
+        {
+            LogFastbootMessage("WARNING: Locking bootloader will erase all data!");
+            LogFastbootMessage("$ fastboot flashing lock");
+            
+            var output = await RunFastbootCommand("flashing lock");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage("Bootloader lock command sent");
+                LogFastbootMessage("Please confirm on device if prompted");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task OemUnlock()
+        {
+            LogFastbootMessage("Attempting OEM unlock...");
+            LogFastbootMessage("$ fastboot oem unlock");
+            
+            var output = await RunFastbootCommand("oem unlock");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+                LogFastbootMessage("Note: OEM unlock may not be supported on all devices");
+            }
+            else
+            {
+                LogFastbootMessage("OEM unlock command sent");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task GetCriticalUnlock()
+        {
+            LogFastbootMessage("Getting critical unlock status...");
+            LogFastbootMessage("$ fastboot getvar unlocked");
+            
+            var output = await RunFastbootCommand("getvar unlocked");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage($"Unlock status: {output.Trim()}");
+            }
+        }
+        
+        private async Task ErasePartition(string partition)
+        {
+            LogFastbootMessage($"WARNING: This will erase the {partition} partition!");
+            LogFastbootMessage($"$ fastboot erase {partition}");
+            
+            var output = await RunFastbootCommand($"erase {partition}");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage($"Successfully erased {partition} partition");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task FormatPartition(string partition)
+        {
+            LogFastbootMessage($"Formatting {partition} partition...");
+            LogFastbootMessage($"$ fastboot format {partition}");
+            
+            var output = await RunFastbootCommand($"format {partition}");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage($"Successfully formatted {partition} partition");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task FastbootRebootSystem()
+        {
+            LogFastbootMessage("Rebooting device to system...");
+            LogFastbootMessage("$ fastboot reboot");
+            
+            var output = await RunFastbootCommand("reboot");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage("Reboot command sent successfully");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task FastbootRebootBootloader()
+        {
+            LogFastbootMessage("Rebooting device to bootloader...");
+            LogFastbootMessage("$ fastboot reboot-bootloader");
+            
+            var output = await RunFastbootCommand("reboot-bootloader");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage("Reboot to bootloader command sent successfully");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task FastbootRebootRecovery()
+        {
+            LogFastbootMessage("Rebooting device to recovery...");
+            LogFastbootMessage("$ fastboot reboot recovery");
+            
+            var output = await RunFastbootCommand("reboot recovery");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage("Reboot to recovery command sent successfully");
+                LogFastbootMessage(output);
+            }
+        }
+        
+        private async Task FastbootRebootFastboot()
+        {
+            LogFastbootMessage("Rebooting device to fastboot mode...");
+            LogFastbootMessage("$ fastboot reboot fastboot");
+            
+            var output = await RunFastbootCommand("reboot fastboot");
+            
+            if (output.StartsWith("Error"))
+            {
+                LogFastbootMessage(output);
+            }
+            else
+            {
+                LogFastbootMessage("Reboot to fastboot command sent successfully");
+                LogFastbootMessage(output);
+            }
+        }
+        
         private void LogMessage(string message)
         {
             var timestamp = DateTime.Now.ToString("[HH:mm] > ");
@@ -2615,6 +3249,17 @@ namespace Aesir
                 adbLogMessages.RemoveAt(0);
             }
             adbLogLabel.SetText(string.Join("\n", adbLogMessages));
+        }
+        
+        private void LogFastbootMessage(string message)
+        {
+            var timestamp = DateTime.Now.ToString("[HH:mm] > ");
+            fastbootLogMessages.Add(timestamp + message);
+            if (fastbootLogMessages.Count > 100)
+            {
+                fastbootLogMessages.RemoveAt(0);
+            }
+            fastbootLogLabel.SetText(string.Join("\n", fastbootLogMessages));
         }
         
         private void StartBackgroundServices()
