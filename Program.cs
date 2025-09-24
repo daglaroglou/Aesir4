@@ -2488,7 +2488,6 @@ namespace Aesir
         private async Task RefreshAdbDevices()
         {
             LogAdbMessage("Refreshing ADB devices...");
-            LogAdbMessage("$ adb devices");
             
             var output = await RunAdbCommand("devices");
             
@@ -2783,7 +2782,6 @@ namespace Aesir
                 return;
             }
             
-            LogAdbMessage($"$ adb shell {command}");
             
             var output = await RunAdbCommand($"shell {command}");
             
@@ -2848,7 +2846,6 @@ namespace Aesir
         private async Task ListAdbDevices()
         {
             LogAdbMessage("Listing ADB devices...");
-            LogAdbMessage("$ adb devices");
 
             var output = await RunAdbCommand("devices");
 
@@ -2894,7 +2891,6 @@ namespace Aesir
         private async Task RefreshFastbootDevices()
         {
             LogFastbootMessage("Refreshing Fastboot devices...");
-            LogFastbootMessage("$ fastboot devices");
             
             var output = await RunFastbootCommand("devices");
             
@@ -2949,7 +2945,6 @@ namespace Aesir
         private async Task GetBootloaderVersion()
         {
             LogFastbootMessage("Getting bootloader version...");
-            LogFastbootMessage("$ fastboot getvar version-bootloader");
             
             var output = await RunFastbootCommand("getvar version-bootloader");
             
@@ -2966,7 +2961,6 @@ namespace Aesir
         private async Task GetSerialNumber()
         {
             LogFastbootMessage("Getting device serial number...");
-            LogFastbootMessage("$ fastboot getvar serialno");
             
             var output = await RunFastbootCommand("getvar serialno");
             
@@ -3001,7 +2995,6 @@ namespace Aesir
             }
             
             LogFastbootMessage($"Flashing {imagePath} to {partition} partition...");
-            LogFastbootMessage($"$ fastboot flash {partition} \"{imagePath}\"");
             
             var output = await RunFastbootCommand($"flash {partition} \"{imagePath}\"");
             
@@ -3025,7 +3018,6 @@ namespace Aesir
             }
             
             LogFastbootMessage($"Executing custom command...");
-            LogFastbootMessage($"$ fastboot {command}");
             
             var output = await RunFastbootCommand(command);
             
@@ -3050,7 +3042,6 @@ namespace Aesir
         private async Task UnlockBootloader()
         {
             LogFastbootMessage("WARNING: Unlocking bootloader will void warranty and erase all data!");
-            LogFastbootMessage("$ fastboot flashing unlock");
             
             var output = await RunFastbootCommand("flashing unlock");
             
@@ -3069,7 +3060,6 @@ namespace Aesir
         private async Task LockBootloader()
         {
             LogFastbootMessage("WARNING: Locking bootloader will erase all data!");
-            LogFastbootMessage("$ fastboot flashing lock");
             
             var output = await RunFastbootCommand("flashing lock");
             
@@ -3088,7 +3078,6 @@ namespace Aesir
         private async Task OemUnlock()
         {
             LogFastbootMessage("Attempting OEM unlock...");
-            LogFastbootMessage("$ fastboot oem unlock");
             
             var output = await RunFastbootCommand("oem unlock");
             
@@ -3107,7 +3096,6 @@ namespace Aesir
         private async Task GetCriticalUnlock()
         {
             LogFastbootMessage("Getting critical unlock status...");
-            LogFastbootMessage("$ fastboot getvar unlocked");
             
             var output = await RunFastbootCommand("getvar unlocked");
             
@@ -3124,7 +3112,6 @@ namespace Aesir
         private async Task ErasePartition(string partition)
         {
             LogFastbootMessage($"WARNING: This will erase the {partition} partition!");
-            LogFastbootMessage($"$ fastboot erase {partition}");
             
             var output = await RunFastbootCommand($"erase {partition}");
             
@@ -3142,7 +3129,6 @@ namespace Aesir
         private async Task FormatPartition(string partition)
         {
             LogFastbootMessage($"Formatting {partition} partition...");
-            LogFastbootMessage($"$ fastboot format {partition}");
             
             var output = await RunFastbootCommand($"format {partition}");
             
@@ -3160,7 +3146,6 @@ namespace Aesir
         private async Task FastbootRebootSystem()
         {
             LogFastbootMessage("Rebooting device to system...");
-            LogFastbootMessage("$ fastboot reboot");
             
             var output = await RunFastbootCommand("reboot");
             
@@ -3178,7 +3163,6 @@ namespace Aesir
         private async Task FastbootRebootBootloader()
         {
             LogFastbootMessage("Rebooting device to bootloader...");
-            LogFastbootMessage("$ fastboot reboot-bootloader");
             
             var output = await RunFastbootCommand("reboot-bootloader");
             
@@ -3196,7 +3180,6 @@ namespace Aesir
         private async Task FastbootRebootRecovery()
         {
             LogFastbootMessage("Rebooting device to recovery...");
-            LogFastbootMessage("$ fastboot reboot recovery");
             
             var output = await RunFastbootCommand("reboot recovery");
             
@@ -3214,7 +3197,6 @@ namespace Aesir
         private async Task FastbootRebootFastboot()
         {
             LogFastbootMessage("Rebooting device to fastboot mode...");
-            LogFastbootMessage("$ fastboot reboot fastboot");
             
             var output = await RunFastbootCommand("reboot fastboot");
             
