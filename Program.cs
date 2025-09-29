@@ -3713,26 +3713,255 @@ namespace Aesir
         
         private void OnAboutActivate(object? sender, EventArgs e)
         {
-            var aboutDialog = Gtk.AboutDialog.New();
-            aboutDialog.SetProgramName("Aesir");
-            aboutDialog.SetVersion("1.0");
-            aboutDialog.SetComments("A modern firmware flashing tool for Samsung devices");
-            aboutDialog.SetCopyright("© 2025 Aesir Project");
-            aboutDialog.SetWebsite("https://github.com/daglaroglou/Aesir");
-            aboutDialog.SetWebsiteLabel("Visit Website");
-            aboutDialog.SetLicense("GNU General Public License v3.0");
-            aboutDialog.SetLicenseType(Gtk.License.Gpl30);
-            aboutDialog.SetAuthors(new string[] {"daglaroglou"});
-            aboutDialog.SetLogoIconName("application-x-firmware");
+            CreateCustomAboutDialog();
+        }
+
+        private void CreateCustomAboutDialog()
+        {
+            // Create the dialog window
+            var dialog = Gtk.Window.New();
+            dialog.SetTitle("About Aesir");
+            dialog.SetDefaultSize(400, 500);
+            dialog.SetResizable(false);
+            dialog.SetModal(true);
             
             var window = GetActiveWindow();
             if (window != null)
             {
-                aboutDialog.SetTransientFor(window);
-                aboutDialog.SetModal(true);
+                dialog.SetTransientFor(window);
+            }
+
+            // Main container with padding
+            var mainBox = Gtk.Box.New(Gtk.Orientation.Vertical, 0);
+            mainBox.SetMarginTop(32);
+            mainBox.SetMarginBottom(32);
+            mainBox.SetMarginStart(32);
+            mainBox.SetMarginEnd(32);
+
+            // App icon (circular) - using custom image
+            var iconImage = Gtk.Image.New();
+            
+            // Try to load custom image first, fallback to icon name
+            try 
+            {
+                // You can put your image in the same directory as the executable
+                // or specify a full path like "/path/to/your/image.png"
+                var imagePath = "assets/Aesir.png"; // Using the Aesir.png image from assets folder
+                
+                // Check if file exists in the current directory or try as absolute path
+                if (System.IO.File.Exists(imagePath) || System.IO.Path.IsPathRooted(imagePath))
+                {
+                    iconImage.SetFromFile(imagePath);
+                    iconImage.SetPixelSize(128);
+                }
+                else
+                {
+                    // Fallback to icon name if custom image not found
+                    iconImage.SetFromIconName("application-x-firmware");
+                    iconImage.SetIconSize(Gtk.IconSize.Large);
+                    iconImage.SetPixelSize(128);
+                }
+            }
+            catch
+            {
+                // Fallback to icon name if there's any error loading the custom image
+                iconImage.SetFromIconName("application-x-firmware");
+                iconImage.SetIconSize(Gtk.IconSize.Large);
+                iconImage.SetPixelSize(128);
             }
             
-            aboutDialog.Show();
+            // Add the icon directly without circular frame
+            iconImage.SetHalign(Gtk.Align.Center);
+            iconImage.SetMarginBottom(12);
+            
+            mainBox.Append(iconImage);
+
+            // Subtitle
+            var subtitleLabel = Gtk.Label.New("Samsung Firmware Flashing Tool");
+            subtitleLabel.AddCssClass("subtitle");
+            subtitleLabel.SetHalign(Gtk.Align.Center);
+            subtitleLabel.SetMarginBottom(16);
+            mainBox.Append(subtitleLabel);
+
+            // Version (clickable button)
+            var versionButton = Gtk.Button.NewWithLabel("1.0.0");
+            versionButton.AddCssClass("version-button");
+            versionButton.AddCssClass("caption");
+            versionButton.SetHalign(Gtk.Align.Center);
+            versionButton.SetMarginBottom(32);
+            versionButton.OnClicked += (sender, args) => {
+                try {
+                    var version = "1.0.0"; // You can make this dynamic later
+                    var releaseUrl = $"https://github.com/daglaroglou/Aesir/releases/tag/v{version}";
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = releaseUrl,
+                        UseShellExecute = true
+                    });
+                } catch { }
+            };
+            mainBox.Append(versionButton);
+
+            // Action buttons container
+            var buttonsBox = Gtk.Box.New(Gtk.Orientation.Vertical, 8);
+            buttonsBox.SetHalign(Gtk.Align.Fill);
+            buttonsBox.SetMarginBottom(24);
+
+            // Website button
+            var websiteButton = Gtk.Button.New();
+            var websiteBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 8);
+            var websiteIcon = Gtk.Image.NewFromIconName("folder-remote-symbolic");
+            websiteIcon.SetIconSize(Gtk.IconSize.Normal);
+            var websiteLabel = Gtk.Label.New("Repository");
+            websiteBox.Append(websiteIcon);
+            websiteBox.Append(websiteLabel);
+            websiteBox.SetHalign(Gtk.Align.Center);
+            websiteButton.SetChild(websiteBox);
+            websiteButton.AddCssClass("pill");
+            websiteButton.SetHalign(Gtk.Align.Fill);
+            websiteButton.OnClicked += (sender, args) => {
+                try {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = "https://github.com/daglaroglou/Aesir",
+                        UseShellExecute = true
+                    });
+                } catch { }
+            };
+            buttonsBox.Append(websiteButton);
+
+            // Report an Issue button
+            var issueButton = Gtk.Button.New();
+            var issueBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 8);
+            var issueIcon = Gtk.Image.NewFromIconName("dialog-warning-symbolic");
+            issueIcon.SetIconSize(Gtk.IconSize.Normal);
+            var issueLabel = Gtk.Label.New("Report an Issue");
+            issueBox.Append(issueIcon);
+            issueBox.Append(issueLabel);
+            issueBox.SetHalign(Gtk.Align.Center);
+            issueButton.SetChild(issueBox);
+            issueButton.AddCssClass("pill");
+            issueButton.SetHalign(Gtk.Align.Fill);
+            issueButton.OnClicked += (sender, args) => {
+                try {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = "https://github.com/daglaroglou/Aesir/issues",
+                        UseShellExecute = true
+                    });
+                } catch { }
+            };
+            buttonsBox.Append(issueButton);
+
+            mainBox.Append(buttonsBox);
+
+            // Credits expander
+            var creditsExpander = Gtk.Expander.New("Credits");
+            creditsExpander.SetMarginBottom(8);
+            
+            var creditsBox = Gtk.Box.New(Gtk.Orientation.Vertical, 8);
+            creditsBox.SetMarginTop(12);
+            creditsBox.SetMarginStart(16);
+            
+            var authorLabel = Gtk.Label.New("Developer: daglaroglou");
+            authorLabel.SetHalign(Gtk.Align.Start);
+            authorLabel.AddCssClass("body");
+            creditsBox.Append(authorLabel);
+            
+            var thorLabel = Gtk.Label.New("Thor Library: TheAirBlow");
+            thorLabel.SetHalign(Gtk.Align.Start);
+            thorLabel.AddCssClass("body");
+            creditsBox.Append(thorLabel);
+            
+            creditsExpander.SetChild(creditsBox);
+            mainBox.Append(creditsExpander);
+
+            // Legal expander
+            var legalExpander = Gtk.Expander.New("Legal");
+            legalExpander.SetMarginBottom(16);
+            
+            var legalBox = Gtk.Box.New(Gtk.Orientation.Vertical, 8);
+            legalBox.SetMarginTop(12);
+            legalBox.SetMarginStart(16);
+            
+            var copyrightLabel = Gtk.Label.New("© 2025 Aesir Project");
+            copyrightLabel.SetHalign(Gtk.Align.Start);
+            copyrightLabel.AddCssClass("body");
+            legalBox.Append(copyrightLabel);
+            
+            var licenseLabel = Gtk.Label.New("Licensed under GNU General Public License v3.0");
+            licenseLabel.SetHalign(Gtk.Align.Start);
+            licenseLabel.AddCssClass("caption");
+            licenseLabel.SetWrap(true);
+            legalBox.Append(licenseLabel);
+            
+            legalExpander.SetChild(legalBox);
+            mainBox.Append(legalExpander);
+
+            // Close button
+            var closeButton = Gtk.Button.NewWithLabel("Close");
+            closeButton.AddCssClass("suggested-action");
+            closeButton.SetHalign(Gtk.Align.Center);
+            closeButton.SetSizeRequest(100, -1);
+            closeButton.OnClicked += (sender, args) => dialog.Close();
+            mainBox.Append(closeButton);
+
+            dialog.SetChild(mainBox);
+            
+            // Add custom CSS for styling
+            AddAboutDialogCSS();
+            
+            dialog.Show();
+        }
+
+        private void AddAboutDialogCSS()
+        {
+            var cssProvider = Gtk.CssProvider.New();
+            var css = @"
+                .circular-frame {
+                    border-radius: 64px;
+                    background: alpha(@theme_fg_color, 0.1);
+                    border: none;
+                    padding: 16px;
+                }
+                
+                .pill {
+                    border-radius: 20px;
+                    padding: 8px 16px;
+                    border: 1px solid alpha(@theme_fg_color, 0.2);
+                    background: alpha(@theme_fg_color, 0.05);
+                }
+                
+                .pill:hover {
+                    background: alpha(@theme_fg_color, 0.1);
+                }
+                
+                .version-button {
+                    background: alpha(white, 0.1);
+                    border: 1px solid alpha(white, 0.2);
+                    border-radius: 16px;
+                    padding: 4px 8px;
+                    color: @theme_fg_color;
+                    font-size: 0.8em;
+                }
+                
+                .version-button:hover {
+                    background: alpha(white, 0.2);
+                    border-color: alpha(white, 0.3);
+                }
+                
+                .version-button:active {
+                    background: alpha(white, 0.15);
+                }
+                
+                expander title {
+                    font-weight: 600;
+                }
+            ";
+            
+            cssProvider.LoadFromString(css);
+            Gtk.StyleContext.AddProviderForDisplay(
+                Gdk.Display.GetDefault()!,
+                cssProvider,
+                600 // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+            );
         }
         
         private void OnSettingsActivate(object? sender, EventArgs e)
