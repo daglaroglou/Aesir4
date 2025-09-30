@@ -481,11 +481,34 @@ namespace Aesir
         private Gtk.Entry packageNameEntry = null!;
         private Gtk.Entry packagePathEntry = null!;
         
+        // ADB device detection widget
+        private Gtk.Label adbDeviceStatusLabel = null!;
+        private Gtk.Label adbDeviceModelLabel = null!;
+        private Gtk.Label adbDeviceSerialLabel = null!;
+        
+        // ADB progress tracking
+        private Gtk.ProgressBar adbProgressBar = null!;
+        private Gtk.Label adbStepLabel = null!;
+        private Gtk.Label adbTimeLabel = null!;
+        
+        // Tab tracking
+        private Gtk.Notebook mainNotebook = null!;
+        
         // Fastboot tab controls
         private Gtk.Label fastbootLogLabel = null!;
         private Gtk.Entry fastbootCommandEntry = null!;
         private Gtk.Entry fastbootImagePathEntry = null!;
         private Gtk.Entry fastbootPartitionEntry = null!;
+        
+        // Fastboot device detection widgets
+        private Gtk.Label fastbootDeviceStatusLabel = null!;
+        private Gtk.Label fastbootDeviceModelLabel = null!;
+        private Gtk.Label fastbootDeviceSerialLabel = null!;
+        
+        // Fastboot progress widgets
+        private Gtk.ProgressBar fastbootProgressBar = null!;
+        private Gtk.Label fastbootStepLabel = null!;
+        private Gtk.Label fastbootTimeLabel = null!;
         
         // Log storage
         private List<string> odinLogMessages = new List<string>();
@@ -546,7 +569,7 @@ namespace Aesir
             titleLabel.AddCssClass("title");
             titleBox.Append(titleLabel);
             
-            var subtitleLabel = Gtk.Label.New("Firmware Flash Tool");
+            var subtitleLabel = Gtk.Label.New($"v{settings.CurrentVersion}");
             subtitleLabel.AddCssClass("subtitle");
             titleBox.Append(subtitleLabel);
             
@@ -578,29 +601,29 @@ namespace Aesir
             SetTitlebar(headerBar);
             
             // Create main notebook for tabs
-            var notebook = Gtk.Notebook.New();
+            mainNotebook = Gtk.Notebook.New();
             
             // Create Odin Tab
             var odinTab = CreateOdinTab();
-            notebook.AppendPage(odinTab, Gtk.Label.New("Odin"));
+            mainNotebook.AppendPage(odinTab, Gtk.Label.New("Odin"));
 
             // Create ADB Tab
             var adbTab = CreateAdbTab();
-            notebook.AppendPage(adbTab, Gtk.Label.New("ADB"));
+            mainNotebook.AppendPage(adbTab, Gtk.Label.New("ADB"));
             
             // Create Fastboot Tab
             var fastbootTab = CreateFastbootTab();
-            notebook.AppendPage(fastbootTab, Gtk.Label.New("Fastboot"));
+            mainNotebook.AppendPage(fastbootTab, Gtk.Label.New("Fastboot"));
             
             // Create GAPPS Tab
             var gappsTab = CreateGappsTab();
-            notebook.AppendPage(gappsTab, Gtk.Label.New("GAPPS"));
+            mainNotebook.AppendPage(gappsTab, Gtk.Label.New("GAPPS"));
             
             // Create Other Tab
             var otherTab = CreateOtherTab();
-            notebook.AppendPage(otherTab, Gtk.Label.New("Other"));
+            mainNotebook.AppendPage(otherTab, Gtk.Label.New("Other"));
             
-            Child = notebook;
+            Child = mainNotebook;
         }
         
         private void ApplyGnomeStyles()
@@ -922,7 +945,7 @@ namespace Aesir
             topFrame.Child = topGrid;
             mainVBox.Append(topFrame);
             
-            // Middle section - Three frames side by side (matching Odin structure)
+            // Middle section - Four frames side by side (matching Odin structure)
             var middleHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
             
             // Left side - Device Information
@@ -1006,6 +1029,88 @@ namespace Aesir
             systemFrame.Child = systemVBox;
             middleHBox.Append(systemFrame);
             
+            // Fourth column - Device Detection and Progress (2 separate frames stacked vertically)
+            var deviceProgressColumnVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
+            
+            // Top frame - Device Detection
+            var deviceDetectionFrame = Gtk.Frame.New("Device Detection");
+            var deviceInfoVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 5);
+            deviceInfoVBox.SetMarginTop(10);
+            deviceInfoVBox.SetMarginBottom(10);
+            deviceInfoVBox.SetMarginStart(10);
+            deviceInfoVBox.SetMarginEnd(10);
+            
+            // Status row
+            var statusHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 5);
+            var statusLabel = Gtk.Label.New("Status:");
+            statusLabel.Xalign = 0;
+            statusLabel.SetSizeRequest(60, -1);
+            statusHBox.Append(statusLabel);
+            
+            adbDeviceStatusLabel = Gtk.Label.New("No device detected");
+            adbDeviceStatusLabel.Xalign = 0;
+            adbDeviceStatusLabel.SetHexpand(true);
+            adbDeviceStatusLabel.AddCssClass("dim-label");
+            statusHBox.Append(adbDeviceStatusLabel);
+            deviceInfoVBox.Append(statusHBox);
+            
+            // Model row
+            var modelHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 5);
+            var modelLabel = Gtk.Label.New("Model:");
+            modelLabel.Xalign = 0;
+            modelLabel.SetSizeRequest(60, -1);
+            modelHBox.Append(modelLabel);
+            
+            adbDeviceModelLabel = Gtk.Label.New("Unknown");
+            adbDeviceModelLabel.Xalign = 0;
+            adbDeviceModelLabel.SetHexpand(true);
+            adbDeviceModelLabel.AddCssClass("dim-label");
+            modelHBox.Append(adbDeviceModelLabel);
+            deviceInfoVBox.Append(modelHBox);
+            
+            // Serial row
+            var serialHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 5);
+            var serialLabel = Gtk.Label.New("Serial:");
+            serialLabel.Xalign = 0;
+            serialLabel.SetSizeRequest(60, -1);
+            serialHBox.Append(serialLabel);
+            
+            adbDeviceSerialLabel = Gtk.Label.New("Unknown");
+            adbDeviceSerialLabel.Xalign = 0;
+            adbDeviceSerialLabel.SetHexpand(true);
+            adbDeviceSerialLabel.AddCssClass("dim-label");
+            serialHBox.Append(adbDeviceSerialLabel);
+            deviceInfoVBox.Append(serialHBox);
+            
+            deviceDetectionFrame.Child = deviceInfoVBox;
+            deviceProgressColumnVBox.Append(deviceDetectionFrame);
+            
+            // Bottom frame - Progress Tracker
+            var progressFrame = Gtk.Frame.New("Progress");
+            var progressVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
+            progressVBox.SetMarginTop(10);
+            progressVBox.SetMarginBottom(10);
+            progressVBox.SetMarginStart(10);
+            progressVBox.SetMarginEnd(10);
+            
+            adbProgressBar = Gtk.ProgressBar.New();
+            adbProgressBar.SetShowText(true);
+            adbProgressBar.SetText("Ready");
+            progressVBox.Append(adbProgressBar);
+            
+            adbStepLabel = Gtk.Label.New("Step: Waiting for operation...");
+            adbStepLabel.Xalign = 0;
+            progressVBox.Append(adbStepLabel);
+            
+            adbTimeLabel = Gtk.Label.New("Elapsed: 00:00");
+            adbTimeLabel.Xalign = 0;
+            progressVBox.Append(adbTimeLabel);
+            
+            progressFrame.Child = progressVBox;
+            deviceProgressColumnVBox.Append(progressFrame);
+            
+            middleHBox.Append(deviceProgressColumnVBox);
+            
             mainVBox.Append(middleHBox);
             
             // Bottom section - Log output (matching Odin structure)
@@ -1029,6 +1134,9 @@ namespace Aesir
             adbLogFrame.SetVexpand(true);
             adbLogFrame.SetHexpand(true);
             mainVBox.Append(adbLogFrame);
+            
+            // Initial device status check
+            Task.Run(async () => await RefreshAdbDeviceStatus());
             
             return mainVBox;
         }
@@ -1211,6 +1319,88 @@ namespace Aesir
             rebootFrame.Child = rebootVBox;
             middleHBox.Append(rebootFrame);
             
+            // Fourth column - Device Detection and Progress (2 separate frames stacked vertically)
+            var deviceProgressColumnVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
+            
+            // Top frame - Device Detection
+            var deviceDetectionFrame = Gtk.Frame.New("Device Detection");
+            var deviceInfoVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 5);
+            deviceInfoVBox.SetMarginTop(10);
+            deviceInfoVBox.SetMarginBottom(10);
+            deviceInfoVBox.SetMarginStart(10);
+            deviceInfoVBox.SetMarginEnd(10);
+            
+            // Status row
+            var statusHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 5);
+            var statusLabel = Gtk.Label.New("Status:");
+            statusLabel.Xalign = 0;
+            statusLabel.SetSizeRequest(60, -1);
+            statusHBox.Append(statusLabel);
+            
+            fastbootDeviceStatusLabel = Gtk.Label.New("No device detected");
+            fastbootDeviceStatusLabel.Xalign = 0;
+            fastbootDeviceStatusLabel.SetHexpand(true);
+            fastbootDeviceStatusLabel.AddCssClass("dim-label");
+            statusHBox.Append(fastbootDeviceStatusLabel);
+            deviceInfoVBox.Append(statusHBox);
+            
+            // Model row
+            var modelHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 5);
+            var modelLabel = Gtk.Label.New("Model:");
+            modelLabel.Xalign = 0;
+            modelLabel.SetSizeRequest(60, -1);
+            modelHBox.Append(modelLabel);
+            
+            fastbootDeviceModelLabel = Gtk.Label.New("Unknown");
+            fastbootDeviceModelLabel.Xalign = 0;
+            fastbootDeviceModelLabel.SetHexpand(true);
+            fastbootDeviceModelLabel.AddCssClass("dim-label");
+            modelHBox.Append(fastbootDeviceModelLabel);
+            deviceInfoVBox.Append(modelHBox);
+            
+            // Serial row
+            var serialHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 5);
+            var serialLabel = Gtk.Label.New("Serial:");
+            serialLabel.Xalign = 0;
+            serialLabel.SetSizeRequest(60, -1);
+            serialHBox.Append(serialLabel);
+            
+            fastbootDeviceSerialLabel = Gtk.Label.New("Unknown");
+            fastbootDeviceSerialLabel.Xalign = 0;
+            fastbootDeviceSerialLabel.SetHexpand(true);
+            fastbootDeviceSerialLabel.AddCssClass("dim-label");
+            serialHBox.Append(fastbootDeviceSerialLabel);
+            deviceInfoVBox.Append(serialHBox);
+            
+            deviceDetectionFrame.Child = deviceInfoVBox;
+            deviceProgressColumnVBox.Append(deviceDetectionFrame);
+            
+            // Bottom frame - Progress Tracker
+            var progressFrame = Gtk.Frame.New("Progress");
+            var progressVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
+            progressVBox.SetMarginTop(10);
+            progressVBox.SetMarginBottom(10);
+            progressVBox.SetMarginStart(10);
+            progressVBox.SetMarginEnd(10);
+            
+            fastbootProgressBar = Gtk.ProgressBar.New();
+            fastbootProgressBar.SetShowText(true);
+            fastbootProgressBar.SetText("Ready");
+            progressVBox.Append(fastbootProgressBar);
+            
+            fastbootStepLabel = Gtk.Label.New("Step: Waiting for operation...");
+            fastbootStepLabel.Xalign = 0;
+            progressVBox.Append(fastbootStepLabel);
+            
+            fastbootTimeLabel = Gtk.Label.New("Elapsed: 00:00");
+            fastbootTimeLabel.Xalign = 0;
+            progressVBox.Append(fastbootTimeLabel);
+            
+            progressFrame.Child = progressVBox;
+            deviceProgressColumnVBox.Append(progressFrame);
+            
+            middleHBox.Append(deviceProgressColumnVBox);
+            
             mainVBox.Append(middleHBox);
             
             // Bottom section - Log output (matching Odin structure)
@@ -1234,6 +1424,9 @@ namespace Aesir
             fastbootLogFrame.SetVexpand(true);
             fastbootLogFrame.SetHexpand(true);
             mainVBox.Append(fastbootLogFrame);
+            
+            // Initial device status check
+            Task.Run(async () => await RefreshFastbootDeviceStatus());
             
             return mainVBox;
         }
@@ -2612,6 +2805,46 @@ namespace Aesir
             }
         }
         
+        // Helper method to run Fastboot getvar commands (which output to stderr)
+        private async Task<string> RunFastbootGetvar(string variable)
+        {
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "fastboot",
+                        Arguments = $"getvar {variable}",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                // For getvar commands, the actual output is usually in stderr, not stdout
+                // But we still check exit code to ensure the command succeeded
+                if (process.ExitCode != 0)
+                {
+                    return $"Error: Command failed with exit code {process.ExitCode}";
+                }
+                
+                // Return stderr content for getvar commands (this is where the variable info is)
+                // If stderr is empty, fall back to stdout
+                return !string.IsNullOrEmpty(error) ? error : output;
+            }
+            catch (Exception ex)
+            {
+                return $"Error running Fastboot getvar: {ex.Message}";
+            }
+        }
+        
         // ADB Methods
         private async Task RefreshAdbDevices()
         {
@@ -2627,12 +2860,11 @@ namespace Aesir
             }
             
             var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            LogAdbMessage("List of devices attached");
             
             bool foundDevices = false;
             foreach (var line in lines)
             {
-                if (line.Contains("device") && !line.Contains("List of devices"))
+                if ((line.Contains("device") || line.Contains("recovery") || line.Contains("sideload")) && !line.Contains("List of devices"))
                 {
                     LogAdbMessage(line.Trim());
                     foundDevices = true;
@@ -2643,6 +2875,333 @@ namespace Aesir
             {
                 LogAdbMessage("No devices connected");
             }
+        }
+        
+        private async Task RefreshAdbDeviceStatus()
+        {
+            try
+            {
+                // Get list of devices
+                var devicesOutput = await RunAdbCommand("devices");
+                
+                if (devicesOutput.StartsWith("Error"))
+                {
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        adbDeviceStatusLabel.SetText("ADB not available");
+                        adbDeviceModelLabel.SetText("Unknown");
+                        adbDeviceSerialLabel.SetText("Unknown");
+                        adbDeviceStatusLabel.RemoveCssClass("success");
+                        adbDeviceStatusLabel.AddCssClass("error");
+                        return false;
+                    });
+                    return;
+                }
+                
+                var lines = devicesOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                string? deviceSerial = null;
+                string deviceMode = "";
+                
+                // Find first connected device (normal, recovery, sideload, etc.)
+                foreach (var line in lines)
+                {
+                    if (!line.Contains("List of devices") && line.Trim().Length > 0)
+                    {
+                        var parts = line.Trim().Split('\t');
+                        if (parts.Length >= 2)
+                        {
+                            var status = parts[1].ToLower();
+                            // Accept devices in various modes: device, recovery, sideload
+                            if (status == "device" || status == "recovery" || status == "sideload")
+                            {
+                                deviceSerial = parts[0];
+                                deviceMode = status;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (string.IsNullOrEmpty(deviceSerial))
+                {
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        adbDeviceStatusLabel.SetText("No device detected");
+                        adbDeviceModelLabel.SetText("Unknown");
+                        adbDeviceSerialLabel.SetText("Unknown");
+                        adbDeviceStatusLabel.RemoveCssClass("success");
+                        adbDeviceStatusLabel.AddCssClass("dim-label");
+                        return false;
+                    });
+                    return;
+                }
+                
+                // Device found, get device info
+                var statusText = deviceMode switch
+                {
+                    "device" => "Connected",
+                    "recovery" => "Recovery",
+                    "sideload" => "Sideload",
+                    _ => "Connected"
+                };
+                
+                // Get device model first (if possible)
+                string modelText = "Unknown";
+                if (deviceMode == "device" || deviceMode == "recovery")
+                {
+                    var modelOutput = await RunAdbCommand("shell getprop ro.product.model");
+                    if (!modelOutput.StartsWith("Error") && !string.IsNullOrWhiteSpace(modelOutput))
+                    {
+                        modelText = modelOutput.Trim();
+                    }
+                }
+                
+                // Update UI on main thread
+                GLib.Functions.IdleAdd(0, () =>
+                {
+                    adbDeviceStatusLabel.SetText(statusText);
+                    adbDeviceSerialLabel.SetText(deviceSerial);
+                    adbDeviceModelLabel.SetText(modelText);
+                    adbDeviceStatusLabel.RemoveCssClass("dim-label");
+                    adbDeviceStatusLabel.AddCssClass("success");
+                    return false;
+                });
+            }
+            catch (Exception ex)
+            {
+                GLib.Functions.IdleAdd(0, () =>
+                {
+                    adbDeviceStatusLabel.SetText($"Error: {ex.Message}");
+                    adbDeviceModelLabel.SetText("Unknown");
+                    adbDeviceSerialLabel.SetText("Unknown");
+                    adbDeviceStatusLabel.RemoveCssClass("success");
+                    adbDeviceStatusLabel.AddCssClass("error");
+                    return false;
+                });
+            }
+        }
+        
+        private async Task RefreshFastbootDeviceStatus()
+        {
+            try
+            {
+                // Get list of devices
+                var devicesOutput = await RunFastbootCommand("devices");
+                
+                if (devicesOutput.StartsWith("Error"))
+                {
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        fastbootDeviceStatusLabel.SetText("Fastboot not available");
+                        fastbootDeviceModelLabel.SetText("Unknown");
+                        fastbootDeviceSerialLabel.SetText("Unknown");
+                        fastbootDeviceStatusLabel.RemoveCssClass("success");
+                        fastbootDeviceStatusLabel.AddCssClass("error");
+                        return false;
+                    });
+                    return;
+                }
+                
+                var lines = devicesOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                string? deviceSerial = null;
+                string deviceMode = "";
+                
+                // Find first connected device in fastboot mode
+                foreach (var line in lines)
+                {
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        // Try multiple splitting methods - tab, multiple spaces, or single space
+                        string[] parts = null;
+                        
+                        if (line.Contains("\t"))
+                        {
+                            parts = line.Trim().Split('\t', StringSplitOptions.RemoveEmptyEntries);
+                        }
+                        else if (line.Contains("  ")) // Multiple spaces
+                        {
+                            parts = line.Trim().Split(new string[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
+                        }
+                        else if (line.Contains(" ")) // Single space
+                        {
+                            parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        }
+                        
+                        if (parts != null && parts.Length >= 2)
+                        {
+                            var serial = parts[0].Trim();
+                            var status = parts[1].Trim().ToLower();
+                            
+                            // Accept devices in fastboot mode (both fastboot and fastbootd)
+                            if (status == "fastboot" || status == "fastbootd")
+                            {
+                                deviceSerial = serial;
+                                deviceMode = status;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (string.IsNullOrEmpty(deviceSerial))
+                {
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        fastbootDeviceStatusLabel.SetText("No device detected");
+                        fastbootDeviceModelLabel.SetText("Unknown");
+                        fastbootDeviceSerialLabel.SetText("Unknown");
+                        fastbootDeviceStatusLabel.RemoveCssClass("success");
+                        fastbootDeviceStatusLabel.AddCssClass("dim-label");
+                        return false;
+                    });
+                    return;
+                }
+                
+                // Device found, get device info
+                string modelText = "Unknown";
+                
+                // Try to get device model from fastboot variables
+                // Note: fastboot getvar outputs to stderr, so we need special handling
+                var modelOutput = await RunFastbootGetvar("product");
+                if (!modelOutput.StartsWith("Error") && !string.IsNullOrWhiteSpace(modelOutput))
+                {
+                    // Parse fastboot getvar output (usually contains "product: <model>")
+                    var lines2 = modelOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines2)
+                    {
+                        // Look for "product:" (case insensitive) and ignore "Finished" lines
+                        var trimmedLine = line.Trim();
+                        if (trimmedLine.ToLower().StartsWith("product:") && !trimmedLine.ToLower().Contains("finished"))
+                        {
+                            var parts = trimmedLine.Split(':', 2);
+                            if (parts.Length == 2)
+                            {
+                                var product = parts[1].Trim();
+                                if (!string.IsNullOrEmpty(product))
+                                {
+                                    modelText = product;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Device found, determine status text
+                var statusText = deviceMode switch
+                {
+                    "fastboot" => "Fastboot Mode",
+                    "fastbootd" => "Fastbootd Mode",
+                    _ => "Fastboot Mode"
+                };
+                
+                // Update UI on main thread
+                GLib.Functions.IdleAdd(0, () =>
+                {
+                    fastbootDeviceStatusLabel.SetText(statusText);
+                    fastbootDeviceSerialLabel.SetText(deviceSerial);
+                    fastbootDeviceModelLabel.SetText(modelText);
+                    fastbootDeviceStatusLabel.RemoveCssClass("dim-label");
+                    fastbootDeviceStatusLabel.AddCssClass("success");
+                    return false;
+                });
+            }
+            catch (Exception ex)
+            {
+                GLib.Functions.IdleAdd(0, () =>
+                {
+                    fastbootDeviceStatusLabel.SetText($"Error: {ex.Message}");
+                    fastbootDeviceModelLabel.SetText("Unknown");
+                    fastbootDeviceSerialLabel.SetText("Unknown");
+                    fastbootDeviceStatusLabel.RemoveCssClass("success");
+                    fastbootDeviceStatusLabel.AddCssClass("error");
+                    return false;
+                });
+            }
+        }
+        
+        private void UpdateAdbProgress(double fraction, string text)
+        {
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                adbProgressBar?.SetFraction(fraction);
+                adbProgressBar?.SetText(text);
+                return false;
+            });
+        }
+        
+        private void UpdateAdbStep(string step)
+        {
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                adbStepLabel?.SetText($"Step: {step}");
+                return false;
+            });
+        }
+        
+        private void UpdateAdbTime(DateTime startTime)
+        {
+            var elapsed = DateTime.Now - startTime;
+            var elapsedStr = $"{elapsed.Minutes:D2}:{elapsed.Seconds:D2}";
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                adbTimeLabel?.SetText($"Elapsed: {elapsedStr}");
+                return false;
+            });
+        }
+        
+        private void ResetAdbProgress()
+        {
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                adbProgressBar?.SetFraction(0.0);
+                adbProgressBar?.SetText("Ready");
+                adbStepLabel?.SetText("Step: Waiting for operation...");
+                adbTimeLabel?.SetText("Elapsed: 00:00");
+                return false;
+            });
+        }
+        
+        private void UpdateFastbootProgress(double fraction, string text)
+        {
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                fastbootProgressBar?.SetFraction(fraction);
+                fastbootProgressBar?.SetText(text);
+                return false;
+            });
+        }
+        
+        private void UpdateFastbootStep(string step)
+        {
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                fastbootStepLabel?.SetText($"Step: {step}");
+                return false;
+            });
+        }
+        
+        private void UpdateFastbootTime(DateTime startTime)
+        {
+            var elapsed = DateTime.Now - startTime;
+            var elapsedStr = $"{elapsed.Minutes:D2}:{elapsed.Seconds:D2}";
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                fastbootTimeLabel?.SetText($"Elapsed: {elapsedStr}");
+                return false;
+            });
+        }
+        
+        private void ResetFastbootProgress()
+        {
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                fastbootProgressBar?.SetFraction(0.0);
+                fastbootProgressBar?.SetText("Ready");
+                fastbootStepLabel?.SetText("Step: Waiting for operation...");
+                fastbootTimeLabel?.SetText("Elapsed: 00:00");
+                return false;
+            });
         }
         
         private async Task GetDeviceInfo()
@@ -2769,23 +3328,53 @@ namespace Aesir
                 return;
             }
             
-            LogAdbMessage($"Installing package: {Path.GetFileName(packagePath)}");
+            var startTime = DateTime.Now;
+            var fileName = Path.GetFileName(packagePath);
+            
+            // Initialize progress
+            UpdateAdbProgress(0.0, "Starting installation...");
+            UpdateAdbStep($"Installing {fileName}");
+            
+            LogAdbMessage($"Installing package: {fileName}");
             LogAdbMessage("This may take a while...");
             
+            // Simulate progress updates during installation
+            var progressTask = Task.Run(async () =>
+            {
+                for (int i = 1; i <= 90; i += 10)
+                {
+                    await Task.Delay(500);
+                    UpdateAdbProgress(i / 100.0, $"Installing... {i}%");
+                    UpdateAdbTime(startTime);
+                }
+            });
+            
             var output = await RunAdbCommand($"install \"{packagePath}\"");
+            
+            // Complete progress
+            UpdateAdbProgress(1.0, "Installation complete");
+            UpdateAdbTime(startTime);
             
             if (output.Contains("Success"))
             {
                 LogAdbMessage("Package installed successfully!");
+                UpdateAdbStep("Installation successful");
             }
             else if (output.StartsWith("Error"))
             {
                 LogAdbMessage(output);
+                UpdateAdbStep("Installation failed");
+                UpdateAdbProgress(0.0, "Installation failed");
             }
             else
             {
                 LogAdbMessage($"Install result: {output.Trim()}");
+                UpdateAdbStep("Installation completed");
             }
+            
+            // Reset after a delay
+            await Task.Delay(2000);
+            ResetAdbProgress();
         }
         
         private async Task UninstallPackage(string packageName)
@@ -2802,22 +3391,44 @@ namespace Aesir
                 packageName = packageName.Substring(8);
             }
             
+            var startTime = DateTime.Now;
+            
+            // Initialize progress
+            UpdateAdbProgress(0.0, "Starting uninstallation...");
+            UpdateAdbStep($"Uninstalling {packageName}");
+            
             LogAdbMessage($"Uninstalling package: {packageName}");
             
+            // Simulate progress during uninstallation
+            UpdateAdbProgress(0.5, "Uninstalling...");
+            UpdateAdbTime(startTime);
+            
             var output = await RunAdbCommand($"uninstall {packageName}");
+            
+            // Complete progress
+            UpdateAdbProgress(1.0, "Uninstallation complete");
+            UpdateAdbTime(startTime);
             
             if (output.Contains("Success"))
             {
                 LogAdbMessage("Package uninstalled successfully!");
+                UpdateAdbStep("Uninstallation successful");
             }
             else if (output.StartsWith("Error"))
             {
                 LogAdbMessage(output);
+                UpdateAdbStep("Uninstallation failed");
+                UpdateAdbProgress(0.0, "Uninstallation failed");
             }
             else
             {
                 LogAdbMessage($"Uninstall result: {output.Trim()}");
+                UpdateAdbStep("Uninstallation completed");
             }
+            
+            // Reset after a delay
+            await Task.Delay(2000);
+            ResetAdbProgress();
         }
         
         private async Task RebootDevice()
@@ -3018,33 +3629,61 @@ namespace Aesir
         // Fastboot Methods
         private async Task RefreshFastbootDevices()
         {
-            LogFastbootMessage("Refreshing Fastboot devices...");
+            var startTime = DateTime.Now;
             
-            var output = await RunFastbootCommand("devices");
-            
-            if (output.StartsWith("Error"))
+            try
             {
-                LogFastbootMessage(output);
-                LogFastbootMessage("Make sure Fastboot is installed and device is in bootloader mode");
-                return;
-            }
-            
-            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length == 0)
-            {
-                LogFastbootMessage("No fastboot devices found");
-                LogFastbootMessage("Make sure device is in bootloader/fastboot mode");
-            }
-            else
-            {
-                LogFastbootMessage("Connected fastboot devices:");
-                foreach (var line in lines)
+                // Initialize progress
+                UpdateFastbootProgress(0.0, "Scanning devices...");
+                UpdateFastbootStep("Refreshing device list");
+                
+                LogFastbootMessage("Refreshing Fastboot devices...");
+                
+                UpdateFastbootProgress(0.5, "Querying fastboot...");
+                UpdateFastbootTime(startTime);
+                
+                var output = await RunFastbootCommand("devices");
+                
+                if (output.StartsWith("Error"))
                 {
-                    if (!string.IsNullOrWhiteSpace(line))
+                    UpdateFastbootProgress(0.0, "Scan failed");
+                    LogFastbootMessage(output);
+                    LogFastbootMessage("Make sure Fastboot is installed and device is in bootloader mode");
+                    return;
+                }
+                
+                var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                if (lines.Length == 0)
+                {
+                    UpdateFastbootProgress(1.0, "No devices found");
+                    LogFastbootMessage("No fastboot devices found");
+                    LogFastbootMessage("Make sure device is in bootloader/fastboot mode");
+                }
+                else
+                {
+                    UpdateFastbootProgress(1.0, $"Found {lines.Length} device(s)");
+                    LogFastbootMessage("Connected fastboot devices:");
+                    foreach (var line in lines)
                     {
-                        LogFastbootMessage($"  {line.Trim()}");
+                        if (!string.IsNullOrWhiteSpace(line))
+                        {
+                            LogFastbootMessage($"  {line.Trim()}");
+                        }
                     }
                 }
+                
+                UpdateFastbootTime(startTime);
+            }
+            catch (Exception ex)
+            {
+                UpdateFastbootProgress(0.0, "Scan failed");
+                LogFastbootMessage($"Error refreshing devices: {ex.Message}");
+            }
+            finally
+            {
+                // Reset progress after a delay
+                await Task.Delay(1500);
+                ResetFastbootProgress();
             }
         }
         
@@ -3122,18 +3761,46 @@ namespace Aesir
                 return;
             }
             
-            LogFastbootMessage($"Flashing {imagePath} to {partition} partition...");
+            var startTime = DateTime.Now;
             
-            var output = await RunFastbootCommand($"flash {partition} \"{imagePath}\"");
-            
-            if (output.StartsWith("Error"))
+            try
             {
-                LogFastbootMessage(output);
+                // Initialize progress
+                UpdateFastbootProgress(0.0, "Preparing to flash...");
+                UpdateFastbootStep($"Flashing {partition} partition");
+                
+                LogFastbootMessage($"Flashing {imagePath} to {partition} partition...");
+                
+                // Update progress during flash
+                UpdateFastbootProgress(0.25, "Starting flash operation...");
+                UpdateFastbootTime(startTime);
+                
+                var output = await RunFastbootCommand($"flash {partition} \"{imagePath}\"");
+                
+                if (output.StartsWith("Error"))
+                {
+                    UpdateFastbootProgress(0.0, "Flash failed");
+                    LogFastbootMessage(output);
+                }
+                else
+                {
+                    UpdateFastbootProgress(1.0, "Flash complete!");
+                    LogFastbootMessage($"Successfully flashed {partition} partition");
+                    LogFastbootMessage(output);
+                }
+                
+                UpdateFastbootTime(startTime);
             }
-            else
+            catch (Exception ex)
             {
-                LogFastbootMessage($"Successfully flashed {partition} partition");
-                LogFastbootMessage(output);
+                UpdateFastbootProgress(0.0, "Flash failed");
+                LogFastbootMessage($"Error during flash: {ex.Message}");
+            }
+            finally
+            {
+                // Reset progress after a delay
+                await Task.Delay(2000);
+                ResetFastbootProgress();
             }
         }
         
@@ -3145,25 +3812,53 @@ namespace Aesir
                 return;
             }
             
-            LogFastbootMessage($"Executing custom command...");
+            var startTime = DateTime.Now;
             
-            var output = await RunFastbootCommand(command);
-            
-            if (output.StartsWith("Error"))
+            try
             {
-                LogFastbootMessage(output);
-            }
-            else
-            {
-                LogFastbootMessage("Command executed successfully:");
-                if (!string.IsNullOrWhiteSpace(output))
+                // Initialize progress
+                UpdateFastbootProgress(0.0, "Executing command...");
+                UpdateFastbootStep($"Running: {command}");
+                
+                LogFastbootMessage($"Executing custom command...");
+                
+                // Update progress during execution
+                UpdateFastbootProgress(0.5, "Processing...");
+                UpdateFastbootTime(startTime);
+                
+                var output = await RunFastbootCommand(command);
+                
+                if (output.StartsWith("Error"))
                 {
-                    var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                    foreach (var line in lines)
+                    UpdateFastbootProgress(0.0, "Command failed");
+                    LogFastbootMessage(output);
+                }
+                else
+                {
+                    UpdateFastbootProgress(1.0, "Command complete!");
+                    LogFastbootMessage("Command executed successfully:");
+                    if (!string.IsNullOrWhiteSpace(output))
                     {
-                        LogFastbootMessage(line.Trim());
+                        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var line in lines)
+                        {
+                            LogFastbootMessage(line.Trim());
+                        }
                     }
                 }
+                
+                UpdateFastbootTime(startTime);
+            }
+            catch (Exception ex)
+            {
+                UpdateFastbootProgress(0.0, "Command failed");
+                LogFastbootMessage($"Error executing command: {ex.Message}");
+            }
+            finally
+            {
+                // Reset progress after a delay
+                await Task.Delay(1500);
+                ResetFastbootProgress();
             }
         }
         
@@ -3353,12 +4048,18 @@ namespace Aesir
         private void LogAdbMessage(string message)
         {
             var timestamp = DateTime.Now.ToString("[HH:mm] > ");
-            adbLogMessages.Add(timestamp + message);
-            if (adbLogMessages.Count > 100)
+            
+            // Ensure UI updates happen on the main thread
+            GLib.Functions.IdleAdd(0, () =>
             {
-                adbLogMessages.RemoveAt(0);
-            }
-            adbLogLabel.SetText(string.Join("\n", adbLogMessages));
+                adbLogMessages.Add(timestamp + message);
+                if (adbLogMessages.Count > 100)
+                {
+                    adbLogMessages.RemoveAt(0);
+                }
+                adbLogLabel.SetText(string.Join("\n", adbLogMessages));
+                return false; // Don't repeat
+            });
         }
         
         private void LogFastbootMessage(string message)
@@ -3374,8 +4075,8 @@ namespace Aesir
         
         private void StartBackgroundServices()
         {
-            // Start device check timer - check every 3 seconds
-            deviceCheckTimer = new System.Threading.Timer(DeviceCheckCallback, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3));
+            // Start device check timer - check every 1 second
+            deviceCheckTimer = new System.Threading.Timer(DeviceCheckCallback, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
             
             // Start elapsed time timer - update every second
             elapsedTimeTimer = new System.Threading.Timer(ElapsedTimeCallback, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
@@ -3390,7 +4091,14 @@ namespace Aesir
                 {
                     try
                     {
+                        // Always check Odin device connection
                         CheckDeviceConnection();
+                        
+                        // Always check ADB device status
+                        await RefreshAdbDeviceStatus();
+                        
+                        // Always check Fastboot device status
+                        await RefreshFastbootDeviceStatus();
                     }
                     catch (Exception ex)
                     {
@@ -3439,10 +4147,166 @@ namespace Aesir
         }
     }
     
+    public class LoadingWindow : Gtk.Window
+    {
+        private Gtk.Label statusLabel;
+        private uint animationTimeoutId;
+        private int dotCount = 0;
+        
+        public LoadingWindow() : base()
+        {
+            Title = "Aesir";
+            SetDefaultSize(350, 220);
+            SetResizable(false);
+            SetModal(true);
+            SetDecorated(true);
+            
+            var headerBar = Gtk.HeaderBar.New();
+            headerBar.SetTitleWidget(Gtk.Label.New("Updater"));
+            headerBar.ShowTitleButtons = true;
+            SetTitlebar(headerBar);
+            
+            var mainBox = Gtk.Box.New(Gtk.Orientation.Vertical, 25);
+            mainBox.SetMarginTop(35);
+            mainBox.SetMarginBottom(35);
+            mainBox.SetMarginStart(35);
+            mainBox.SetMarginEnd(35);
+            mainBox.SetHalign(Gtk.Align.Center);
+            mainBox.SetValign(Gtk.Align.Center);
+            
+            // Add Aesir logo image
+            var logoImage = Gtk.Image.New();
+            try 
+            {
+                var imagePath = "assets/Aesir.png";
+                
+                // Check if file exists in the current directory or try as absolute path
+                if (System.IO.File.Exists(imagePath) || System.IO.Path.IsPathRooted(imagePath))
+                {
+                    logoImage.SetFromFile(imagePath);
+                    logoImage.SetPixelSize(128);
+                }
+                else
+                {
+                    // Fallback to icon name if custom image not found
+                    logoImage.SetFromIconName("application-x-firmware");
+                    logoImage.SetIconSize(Gtk.IconSize.Large);
+                    logoImage.SetPixelSize(64);
+                }
+            }
+            catch
+            {
+                // Fallback to icon name if there's any error loading the custom image
+                logoImage.SetFromIconName("application-x-firmware");
+                logoImage.SetIconSize(Gtk.IconSize.Large);
+                logoImage.SetPixelSize(64);
+            }
+            
+            logoImage.SetHalign(Gtk.Align.Center);
+            logoImage.SetMarginBottom(15);
+            
+            // Create animated status label
+            statusLabel = Gtk.Label.New("Checking for updates");
+            statusLabel.SetHalign(Gtk.Align.Center);
+            
+            // Add label styling
+            var labelContext = statusLabel.GetStyleContext();
+            labelContext.AddClass("loading-text");
+            
+            // Create a progress bar for additional visual feedback
+            var progressBar = Gtk.ProgressBar.New();
+            progressBar.SetSizeRequest(200, 4);
+            progressBar.SetHalign(Gtk.Align.Center);
+            progressBar.Pulse();
+            
+            var progressContext = progressBar.GetStyleContext();
+            progressContext.AddClass("loading-progress");
+            
+            mainBox.Append(logoImage);
+            mainBox.Append(statusLabel);
+            mainBox.Append(progressBar);
+            
+            SetChild(mainBox);
+            
+            // Add CSS for styling and animations
+            AddLoadingWindowCSS();
+            
+            // Start text animation
+            StartTextAnimation();
+            
+            // Start progress bar pulsing
+            GLib.Functions.TimeoutAdd(0, 150, () =>
+            {
+                progressBar.Pulse();
+                return true;
+            });
+        }
+        
+        private void StartTextAnimation()
+        {
+            animationTimeoutId = GLib.Functions.TimeoutAdd(0, 500, () =>
+            {
+                dotCount = (dotCount + 1) % 4;
+                var dots = new string('.', dotCount);
+                statusLabel.SetText($"Checking for updates{dots}");
+                return true;
+            });
+        }
+        
+        private void AddLoadingWindowCSS()
+        {
+            var cssProvider = Gtk.CssProvider.New();
+            cssProvider.LoadFromString(@"
+                .loading-window {
+                    background: @theme_bg_color;
+                    border-radius: 12px;
+                }
+                
+                .loading-text {
+                    font-size: 16px;
+                    font-weight: 500;
+                    color: @theme_fg_color;
+                    opacity: 0.8;
+                }
+                
+                .loading-progress {
+                    background: @theme_unfocused_bg_color;
+                    border-radius: 2px;
+                }
+                
+                .loading-progress progress {
+                    background: @accent_color;
+                    border-radius: 2px;
+                }
+            ");
+            
+            Gtk.StyleContext.AddProviderForDisplay(
+                Gdk.Display.GetDefault()!,
+                cssProvider,
+                600 // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+            );
+            
+            GetStyleContext().AddClass("loading-window");
+        }
+        
+        public void StopAnimations()
+        {
+            // Stop text animation
+            if (animationTimeoutId > 0)
+            {
+                GLib.Source.Remove(animationTimeoutId);
+                animationTimeoutId = 0;
+            }
+        }
+    }
+
     public class SettingsWindow : Gtk.Window
     {
         private AppSettings settings;
         private OdinMainWindow parentWindow;
+        private bool hasUpdateAvailable = false;
+        private string updateVersion = "";
+        private string updateChangelog = "";
         
         public SettingsWindow(OdinMainWindow parent) : base()
         {
@@ -3737,8 +4601,15 @@ namespace Aesir
                 settings.AutoCheckForUpdates = autoUpdateCheckbox.GetActive();
                 settings.Save();
             };
+            
+            // Manual check for updates button
+            var checkUpdatesButton = Gtk.Button.NewWithLabel("Check for Updates");
+            checkUpdatesButton.SetTooltipText("Manually check for updates now");
+            checkUpdatesButton.OnClicked += (sender, args) => OnManualUpdateCheck(checkUpdatesButton);
+            
             autoUpdateBox.Append(autoUpdateLabel);
             autoUpdateBox.Append(autoUpdateCheckbox);
+            autoUpdateBox.Append(checkUpdatesButton);
             generalBox.Append(autoUpdateBox);
             
             generalFrame.SetChild(generalBox);
@@ -3746,6 +4617,89 @@ namespace Aesir
             
             scrolled.SetChild(mainVBox);
             SetChild(scrolled);
+        }
+        
+        private void OnManualUpdateCheck(Gtk.Button button)
+        {
+            // Check if button is in "Update Available" state
+            if (hasUpdateAvailable)
+            {
+                // Show the update dialog again
+                var app = Gtk.Application.GetDefault() as AesirApplication;
+                if (app != null)
+                {
+                    app.ShowUpdateAvailableDialog(parentWindow, updateVersion, updateChangelog);
+                }
+                return;
+            }
+            
+            // Disable button and show checking state on main thread
+            button.SetSensitive(false);
+            button.SetLabel("Checking...");
+            
+            // Capture reference to this for lambda
+            var self = this;
+            
+            // Run the update check on a background thread
+            Task.Run(async () =>
+            {
+                try
+                {
+                    // Get the parent application to access CheckForUpdatesAsync
+                    var app = Gtk.Application.GetDefault() as AesirApplication;
+                    if (app == null) 
+                    {
+                        GLib.Functions.IdleAdd(0, () =>
+                        {
+                            button.SetLabel("Check for Updates");
+                            button.SetSensitive(true);
+                            return false;
+                        });
+                        return;
+                    }
+                    
+                    // Check for updates
+                    var (hasUpdate, version, changelog) = await app.CheckForUpdatesAsync();
+                    
+                    // Update UI on main thread
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        if (hasUpdate)
+                        {
+                            // Store update info in instance variables
+                            self.hasUpdateAvailable = true;
+                            self.updateVersion = version;
+                            self.updateChangelog = changelog;
+                            
+                            // Show update dialog initially
+                            app.ShowUpdateAvailableDialog(self.parentWindow, version, changelog);
+                            
+                            // Change button to allow reopening the dialog
+                            button.SetLabel("Update Available");
+                            button.SetSensitive(true);
+                            button.SetTooltipText("Click to view update details");
+                        }
+                        else
+                        {
+                            button.SetLabel("No updates");
+                            button.SetSensitive(false);
+                            button.SetTooltipText("You are running the latest version");
+                        }
+                        return false;
+                    });
+                }
+                catch (Exception ex)
+                {
+                    // Update UI on main thread for error case
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        button.SetLabel("Check failed");
+                        button.SetSensitive(false);
+                        button.SetTooltipText($"Update check failed: {ex.Message}");
+                        return false;
+                    });
+                }
+            });
         }
     }
     
@@ -3968,14 +4922,6 @@ namespace Aesir
             legalExpander.SetChild(legalBox);
             mainBox.Append(legalExpander);
 
-            // Close button
-            var closeButton = Gtk.Button.NewWithLabel("Close");
-            closeButton.AddCssClass("suggested-action");
-            closeButton.SetHalign(Gtk.Align.Center);
-            closeButton.SetSizeRequest(100, -1);
-            closeButton.OnClicked += (sender, args) => dialog.Close();
-            mainBox.Append(closeButton);
-
             dialog.SetChild(mainBox);
             
             // Add custom CSS for styling
@@ -4048,7 +4994,7 @@ namespace Aesir
             }
         }
         
-        private async Task<(bool hasUpdate, string version, string changelog)> CheckForUpdatesAsync()
+        public async Task<(bool hasUpdate, string version, string changelog)> CheckForUpdatesAsync()
         {
             try
             {
@@ -4183,7 +5129,7 @@ namespace Aesir
             return text;
         }
         
-        private void ShowUpdateAvailableDialog(OdinMainWindow? parentWindow, string version, string changelog)
+        public void ShowUpdateAvailableDialog(OdinMainWindow? parentWindow, string version, string changelog)
         {
             var dialog = Gtk.Window.New();
             dialog.SetTitle("Update Available");
@@ -4221,7 +5167,7 @@ namespace Aesir
             var changelogLabel = Gtk.Label.New("");
             var markupText = ConvertMarkdownToMarkup(changelog);
             changelogLabel.SetMarkup(markupText);
-            changelogLabel.SetSelectable(true);
+            changelogLabel.SetSelectable(false);
             changelogLabel.SetWrap(true);
             changelogLabel.SetHalign(Gtk.Align.Start);
             changelogLabel.SetValign(Gtk.Align.Start);
@@ -4274,27 +5220,64 @@ namespace Aesir
             // Initialize menu actions
             InitializeActions();
             
-            var window = new OdinMainWindow(this);
-            AddWindow(window);
-            window.Show();
+            // Load settings to check if auto updates are enabled
+            var settings = AppSettings.Load();
             
-            // Check for updates on startup if enabled
-            Task.Run(async () =>
+            if (settings.AutoCheckForUpdates)
             {
-                var settings = AppSettings.Load();
-                if (settings.AutoCheckForUpdates)
+                // Show loading window first if auto updates are enabled
+                var loadingWindow = new LoadingWindow();
+                AddWindow(loadingWindow);
+                loadingWindow.Show();
+                
+                // Check for updates and then show appropriate window
+                Task.Run(async () =>
                 {
-                    var (hasUpdate, version, changelog) = await CheckForUpdatesAsync();
-                    if (hasUpdate)
+                    bool hasUpdate = false;
+                    string version = "";
+                    string changelog = "";
+                    
+                    try
                     {
-                        GLib.Functions.IdleAdd(0, () =>
-                        {
-                            ShowUpdateAvailableDialog(window, version, changelog);
-                            return false;
-                        });
+                        (hasUpdate, version, changelog) = await CheckForUpdatesAsync();
                     }
-                }
-            });
+                    catch
+                    {
+                        // If update check fails, just continue to main window
+                        hasUpdate = false;
+                    }
+                    
+                    // Add a small delay to show the loading screen briefly
+                    await Task.Delay(1500);
+                    
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        // Close loading window
+                        loadingWindow.StopAnimations();
+                        loadingWindow.Close();
+                        
+                        // Create and show main window
+                        var mainWindow = new OdinMainWindow(this);
+                        AddWindow(mainWindow);
+                        mainWindow.Show();
+                        
+                        // Show update dialog if update is available
+                        if (hasUpdate)
+                        {
+                            ShowUpdateAvailableDialog(mainWindow, version, changelog);
+                        }
+                        
+                        return false;
+                    });
+                });
+            }
+            else
+            {
+                // Auto updates disabled - show main window directly
+                var mainWindow = new OdinMainWindow(this);
+                AddWindow(mainWindow);
+                mainWindow.Show();
+            }
         }
     }
     
