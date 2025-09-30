@@ -370,7 +370,6 @@ namespace Aesir
         public string LastUsedDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         public bool AutoCheckForUpdates { get; set; } = true;
         public string CurrentVersion { get; set; } = "1.0.0";
-        public string Changelog { get; set; } = "";
         
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), 
@@ -4049,7 +4048,7 @@ namespace Aesir
             }
         }
         
-        private async Task<bool> CheckForUpdatesAsync()
+        private async Task<(bool hasUpdate, string version, string changelog)> CheckForUpdatesAsync()
         {
             try
             {
@@ -4064,8 +4063,10 @@ namespace Aesir
                 {
                     var latestVersion = releaseInfo.tag_name.ToString();
                     var currentVersion = $"v{settings.CurrentVersion}";
+                    var changelog = releaseInfo.body?.ToString() ?? "No changelog available.";
                     
-                    return latestVersion != currentVersion;
+                    var hasUpdate = latestVersion != currentVersion;
+                    return (hasUpdate, latestVersion, changelog);
                 }
             }
             catch (Exception ex)
@@ -4073,15 +4074,121 @@ namespace Aesir
                 Log.Warning($"Failed to check for updates: {ex.Message}");
             }
             
-            return false;
+            return (false, "", "");
         }
         
-        private void ShowUpdateAvailableDialog(OdinMainWindow? parentWindow)
+        private string ConvertMarkdownToMarkup(string markdown)
+        {
+            if (string.IsNullOrEmpty(markdown))
+                return "No changelog available.";
+            
+            var lines = markdown.Split('\n');
+            var result = new System.Text.StringBuilder();
+            bool inCodeBlock = false;
+            
+            foreach (var line in lines)
+            {
+                var trimmedLine = line.Trim();
+                var processedLine = line;
+                
+                // Handle code blocks
+                if (trimmedLine.StartsWith("```"))
+                {
+                    inCodeBlock = !inCodeBlock;
+                    if (inCodeBlock)
+                    {
+                        result.AppendLine("<tt>");
+                    }
+                    else
+                    {
+                        result.AppendLine("</tt>");
+                    }
+                    continue;
+                }
+                
+                if (inCodeBlock)
+                {
+                    // Escape markup in code blocks
+                    processedLine = System.Security.SecurityElement.Escape(line);
+                    result.AppendLine(processedLine);
+                    continue;
+                }
+                
+                // Headers
+                if (trimmedLine.StartsWith("### "))
+                {
+                    var headerText = trimmedLine.Substring(4);
+                    processedLine = $"<b><big>{System.Security.SecurityElement.Escape(headerText)}</big></b>";
+                }
+                else if (trimmedLine.StartsWith("## "))
+                {
+                    var headerText = trimmedLine.Substring(3);
+                    processedLine = $"<b><span size='large'>{System.Security.SecurityElement.Escape(headerText)}</span></b>";
+                }
+                else if (trimmedLine.StartsWith("# "))
+                {
+                    var headerText = trimmedLine.Substring(2);
+                    processedLine = $"<b><span size='x-large'>{System.Security.SecurityElement.Escape(headerText)}</span></b>";
+                }
+                // List items
+                else if (trimmedLine.StartsWith("- ") || trimmedLine.StartsWith("* "))
+                {
+                    var listText = trimmedLine.Substring(2);
+                    processedLine = $"  • {ProcessInlineMarkdown(listText)}";
+                }
+                // Numbered lists
+                else if (System.Text.RegularExpressions.Regex.IsMatch(trimmedLine, @"^\d+\. "))
+                {
+                    var match = System.Text.RegularExpressions.Regex.Match(trimmedLine, @"^(\d+)\. (.*)");
+                    if (match.Success)
+                    {
+                        var number = match.Groups[1].Value;
+                        var listText = match.Groups[2].Value;
+                        processedLine = $"  {number}. {ProcessInlineMarkdown(listText)}";
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(trimmedLine))
+                {
+                    processedLine = ProcessInlineMarkdown(line);
+                }
+                
+                result.AppendLine(processedLine);
+            }
+            
+            return result.ToString();
+        }
+        
+        private string ProcessInlineMarkdown(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+            
+            // Escape existing markup first
+            text = System.Security.SecurityElement.Escape(text);
+            
+            // Bold **text** or __text__
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\*\*(.*?)\*\*", "<b>$1</b>");
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"__(.*?)__", "<b>$1</b>");
+            
+            // Italic *text* or _text_
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\*(.*?)\*", "<i>$1</i>");
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"_(.*?)_", "<i>$1</i>");
+            
+            // Inline code `text`
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"`(.*?)`", "<tt>$1</tt>");
+            
+            // Links [text](url) - just show the text part for simplicity
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\[([^\]]+)\]\([^\)]+\)", "$1");
+            
+            return text;
+        }
+        
+        private void ShowUpdateAvailableDialog(OdinMainWindow? parentWindow, string version, string changelog)
         {
             var dialog = Gtk.Window.New();
             dialog.SetTitle("Update Available");
-            dialog.SetDefaultSize(400, 200);
-            dialog.SetResizable(false);
+            dialog.SetDefaultSize(500, 400);
+            dialog.SetResizable(true);
             dialog.SetModal(true);
             if (parentWindow != null)
             {
@@ -4089,29 +4196,52 @@ namespace Aesir
             }
             
             var headerBar = Gtk.HeaderBar.New();
-            headerBar.SetTitleWidget(Gtk.Label.New("Update Available"));
+            headerBar.SetTitleWidget(Gtk.Label.New($"Update Available - {version}"));
             headerBar.ShowTitleButtons = false;
             dialog.SetTitlebar(headerBar);
             
-            var mainBox = Gtk.Box.New(Gtk.Orientation.Vertical, 20);
-            mainBox.SetMarginTop(30);
-            mainBox.SetMarginBottom(30);
-            mainBox.SetMarginStart(30);
-            mainBox.SetMarginEnd(30);
+            var mainBox = Gtk.Box.New(Gtk.Orientation.Vertical, 15);
+            mainBox.SetMarginTop(20);
+            mainBox.SetMarginBottom(20);
+            mainBox.SetMarginStart(20);
+            mainBox.SetMarginEnd(20);
             
-            var messageLabel = Gtk.Label.New("A new version of Aesir is available.\nWould you like to visit the releases page?");
+            var messageLabel = Gtk.Label.New($"A new version of Aesir is available: {version}\nWould you like to visit the releases page?");
             messageLabel.SetJustify(Gtk.Justification.Center);
             messageLabel.SetHalign(Gtk.Align.Center);
+            messageLabel.SetMarginBottom(10);
             mainBox.Append(messageLabel);
+            
+            // Changelog section
+            var changelogFrame = Gtk.Frame.New("What's New:");
+            var scrolledWindow = Gtk.ScrolledWindow.New();
+            scrolledWindow.SetPolicy(Gtk.PolicyType.Automatic, Gtk.PolicyType.Automatic);
+            scrolledWindow.SetSizeRequest(-1, 200);
+            
+            var changelogLabel = Gtk.Label.New("");
+            var markupText = ConvertMarkdownToMarkup(changelog);
+            changelogLabel.SetMarkup(markupText);
+            changelogLabel.SetSelectable(true);
+            changelogLabel.SetWrap(true);
+            changelogLabel.SetHalign(Gtk.Align.Start);
+            changelogLabel.SetValign(Gtk.Align.Start);
+            changelogLabel.SetMarginTop(10);
+            changelogLabel.SetMarginBottom(10);
+            changelogLabel.SetMarginStart(10);
+            changelogLabel.SetMarginEnd(10);
+            
+            scrolledWindow.SetChild(changelogLabel);
+            changelogFrame.SetChild(scrolledWindow);
+            mainBox.Append(changelogFrame);
             
             var buttonBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
             buttonBox.SetHalign(Gtk.Align.Center);
-            buttonBox.SetMarginTop(20);
+            buttonBox.SetMarginTop(15);
             
-            var noButton = Gtk.Button.NewWithLabel("No");
+            var noButton = Gtk.Button.NewWithLabel("Later");
             noButton.OnClicked += (sender, args) => dialog.Destroy();
             
-            var yesButton = Gtk.Button.NewWithLabel("Yes");
+            var yesButton = Gtk.Button.NewWithLabel("Download Update");
             yesButton.AddCssClass("suggested-action");
             yesButton.OnClicked += (sender, args) =>
             {
@@ -4154,12 +4284,12 @@ namespace Aesir
                 var settings = AppSettings.Load();
                 if (settings.AutoCheckForUpdates)
                 {
-                    var updateAvailable = await CheckForUpdatesAsync();
-                    if (updateAvailable)
+                    var (hasUpdate, version, changelog) = await CheckForUpdatesAsync();
+                    if (hasUpdate)
                     {
                         GLib.Functions.IdleAdd(0, () =>
                         {
-                            ShowUpdateAvailableDialog(window);
+                            ShowUpdateAvailableDialog(window, version, changelog);
                             return false;
                         });
                     }
