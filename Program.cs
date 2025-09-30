@@ -363,16 +363,14 @@ namespace Aesir
     
     public class AppSettings
     {
-        public string DefaultFlashTool { get; set; } = "Thor";
-        public bool AutoReboot { get; set; } = true;
-        public bool ResetTime { get; set; } = true;
-        public bool RePartition { get; set; } = false;
+        public string Odin4Path { get; set; } = "";
+        public string ThorPath { get; set; } = "";
+        public string HeimdallPath { get; set; } = "";
+        public string DefaultFlashTool { get; set; } = "Odin4";
         public string LastUsedDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-        public bool EnableLogging { get; set; } = true;
-        public string LogLevel { get; set; } = "Info";
-        public bool CheckForUpdates { get; set; } = true;
-        public bool ShowAdvancedOptions { get; set; } = false;
-        public int DeviceCheckInterval { get; set; } = 1000; // milliseconds
+        public bool AutoCheckForUpdates { get; set; } = true;
+        public string CurrentVersion { get; set; } = "1.0.0";
+        public string Changelog { get; set; } = "";
         
         private static readonly string SettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), 
@@ -452,9 +450,6 @@ namespace Aesir
         private Gtk.CheckButton cscCheckButton = null!;
         private Gtk.CheckButton userdataCheckButton = null!;
         
-        public Gtk.CheckButton autoRebootCheck = null!;
-        public Gtk.CheckButton resetTimeCheck = null!;
-        public Gtk.CheckButton rePartitionCheck = null!;
         
         private Gtk.Label odinLogLabel = null!;
         private Gtk.Button startButton = null!;
@@ -682,42 +677,6 @@ namespace Aesir
             var middleHBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
             
             // Left side - Options
-            var optionsFrame = Gtk.Frame.New("Options");
-            var optionsVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 5);
-            optionsVBox.SetMarginTop(10);
-            optionsVBox.SetMarginBottom(10);
-            optionsVBox.SetMarginStart(10);
-            optionsVBox.SetMarginEnd(10);
-            
-            autoRebootCheck = Gtk.CheckButton.NewWithLabel("Auto Reboot");
-            autoRebootCheck.Active = settings.AutoReboot;
-            autoRebootCheck.OnToggled += (sender, args) =>
-            {
-                settings.AutoReboot = autoRebootCheck.GetActive();
-                settings.Save();
-            };
-            optionsVBox.Append(autoRebootCheck);
-            
-            resetTimeCheck = Gtk.CheckButton.NewWithLabel("Reset Time");
-            resetTimeCheck.Active = settings.ResetTime;
-            resetTimeCheck.OnToggled += (sender, args) =>
-            {
-                settings.ResetTime = resetTimeCheck.GetActive();
-                settings.Save();
-            };
-            optionsVBox.Append(resetTimeCheck);
-            
-            rePartitionCheck = Gtk.CheckButton.NewWithLabel("Re-Partition");
-            rePartitionCheck.Active = settings.RePartition;
-            rePartitionCheck.OnToggled += (sender, args) =>
-            {
-                settings.RePartition = rePartitionCheck.GetActive();
-                settings.Save();
-            };
-            optionsVBox.Append(rePartitionCheck);
-            
-            optionsFrame.Child = optionsVBox;
-            middleHBox.Append(optionsFrame);
             
             // Middle - Progress and Status  
             var progressFrame = Gtk.Frame.New("Progress");
@@ -2002,16 +1961,10 @@ namespace Aesir
                 {
                     LogMessage("<OSM> All files flashed successfully!");
                     
-                    if (autoRebootCheck.Active)
-                    {
-                        LogMessage("<OSM> Auto-reboot enabled, rebooting device...");
-                        await thorFlashManager.EndSessionAndRebootAsync();
-                        LogMessage("<OSM> Device rebooted successfully!");
-                    }
-                    else
-                    {
-                        await thorFlashManager.EndSessionAndRebootAsync();
-                    }
+                    // Auto-reboot after flashing
+                    LogMessage("<OSM> Auto-reboot enabled, rebooting device...");
+                    await thorFlashManager.EndSessionAndRebootAsync();
+                    LogMessage("<OSM> Device rebooted successfully!");
                     
                     deviceStatusLabel.SetText("Device Status: Flash Complete");
                     progressBar?.SetFraction(1.0);
@@ -2110,10 +2063,7 @@ namespace Aesir
             cscCheckButton.Active = false;
             userdataCheckButton.Active = false;
             
-            // Reset options
-            autoRebootCheck.Active = true;
-            resetTimeCheck.Active = true;
-            rePartitionCheck.Active = false;
+            // Reset options - removed old checkboxes
             
             // Clear log
             odinLogMessages.Clear();
@@ -3525,6 +3475,176 @@ namespace Aesir
             mainVBox.SetMarginStart(20);
             mainVBox.SetMarginEnd(20);
             
+            // Tool Paths Frame
+            var toolPathsFrame = Gtk.Frame.New("Flash Tool Paths");
+            var toolPathsBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
+            toolPathsBox.SetMarginTop(15);
+            toolPathsBox.SetMarginBottom(15);
+            toolPathsBox.SetMarginStart(15);
+            toolPathsBox.SetMarginEnd(15);
+            
+            // Odin4 Path
+            var odin4Box = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
+            var odin4Label = Gtk.Label.New("Odin4 Path:");
+            odin4Label.SetHalign(Gtk.Align.Start);
+            odin4Label.SetSizeRequest(150, -1);
+            var odin4Entry = Gtk.Entry.New();
+            odin4Entry.SetText(settings.Odin4Path);
+            odin4Entry.SetPlaceholderText("Path to Odin4 executable");
+            odin4Entry.OnNotify += (sender, args) =>
+            {
+                if (args.Pspec.GetName() == "text")
+                {
+                    settings.Odin4Path = odin4Entry.GetText();
+                    settings.Save();
+                }
+            };
+            var odin4Button = Gtk.Button.NewWithLabel("Browse");
+            odin4Button.OnClicked += (sender, args) =>
+            {
+                var fileChooser = Gtk.FileChooserNative.New(
+                    "Select Odin4 Executable",
+                    this,
+                    Gtk.FileChooserAction.Open,
+                    "Select",
+                    "Cancel"
+                );
+                
+                fileChooser.OnResponse += (sender, args) =>
+                {
+                    if (args.ResponseId == (int)Gtk.ResponseType.Accept)
+                    {
+                        var file = fileChooser.GetFile();
+                        if (file != null)
+                        {
+                            var path = file.GetPath();
+                            if (!string.IsNullOrEmpty(path))
+                            {
+                                odin4Entry.SetText(path);
+                                settings.Odin4Path = path;
+                                settings.Save();
+                            }
+                        }
+                    }
+                    fileChooser.Destroy();
+                };
+                
+                fileChooser.Show();
+            };
+            odin4Box.Append(odin4Label);
+            odin4Box.Append(odin4Entry);
+            odin4Box.Append(odin4Button);
+            toolPathsBox.Append(odin4Box);
+            
+            // Thor Path
+            var thorBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
+            var thorLabel = Gtk.Label.New("Thor Path:");
+            thorLabel.SetHalign(Gtk.Align.Start);
+            thorLabel.SetSizeRequest(150, -1);
+            var thorEntry = Gtk.Entry.New();
+            thorEntry.SetText(settings.ThorPath);
+            thorEntry.SetPlaceholderText("Path to Thor executable");
+            thorEntry.OnNotify += (sender, args) =>
+            {
+                if (args.Pspec.GetName() == "text")
+                {
+                    settings.ThorPath = thorEntry.GetText();
+                    settings.Save();
+                }
+            };
+            var thorButton = Gtk.Button.NewWithLabel("Browse");
+            thorButton.OnClicked += (sender, args) =>
+            {
+                var fileChooser = Gtk.FileChooserNative.New(
+                    "Select Thor Executable",
+                    this,
+                    Gtk.FileChooserAction.Open,
+                    "Select",
+                    "Cancel"
+                );
+                
+                fileChooser.OnResponse += (sender, args) =>
+                {
+                    if (args.ResponseId == (int)Gtk.ResponseType.Accept)
+                    {
+                        var file = fileChooser.GetFile();
+                        if (file != null)
+                        {
+                            var path = file.GetPath();
+                            if (!string.IsNullOrEmpty(path))
+                            {
+                                thorEntry.SetText(path);
+                                settings.ThorPath = path;
+                                settings.Save();
+                            }
+                        }
+                    }
+                    fileChooser.Destroy();
+                };
+                
+                fileChooser.Show();
+            };
+            thorBox.Append(thorLabel);
+            thorBox.Append(thorEntry);
+            thorBox.Append(thorButton);
+            toolPathsBox.Append(thorBox);
+            
+            // Heimdall Path
+            var heimdallBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
+            var heimdallLabel = Gtk.Label.New("Heimdall Path:");
+            heimdallLabel.SetHalign(Gtk.Align.Start);
+            heimdallLabel.SetSizeRequest(150, -1);
+            var heimdallEntry = Gtk.Entry.New();
+            heimdallEntry.SetText(settings.HeimdallPath);
+            heimdallEntry.SetPlaceholderText("Path to Heimdall executable");
+            heimdallEntry.OnNotify += (sender, args) =>
+            {
+                if (args.Pspec.GetName() == "text")
+                {
+                    settings.HeimdallPath = heimdallEntry.GetText();
+                    settings.Save();
+                }
+            };
+            var heimdallButton = Gtk.Button.NewWithLabel("Browse");
+            heimdallButton.OnClicked += (sender, args) =>
+            {
+                var fileChooser = Gtk.FileChooserNative.New(
+                    "Select Heimdall Executable",
+                    this,
+                    Gtk.FileChooserAction.Open,
+                    "Select",
+                    "Cancel"
+                );
+                
+                fileChooser.OnResponse += (sender, args) =>
+                {
+                    if (args.ResponseId == (int)Gtk.ResponseType.Accept)
+                    {
+                        var file = fileChooser.GetFile();
+                        if (file != null)
+                        {
+                            var path = file.GetPath();
+                            if (!string.IsNullOrEmpty(path))
+                            {
+                                heimdallEntry.SetText(path);
+                                settings.HeimdallPath = path;
+                                settings.Save();
+                            }
+                        }
+                    }
+                    fileChooser.Destroy();
+                };
+                
+                fileChooser.Show();
+            };
+            heimdallBox.Append(heimdallLabel);
+            heimdallBox.Append(heimdallEntry);
+            heimdallBox.Append(heimdallButton);
+            toolPathsBox.Append(heimdallBox);
+            
+            toolPathsFrame.SetChild(toolPathsBox);
+            mainVBox.Append(toolPathsFrame);
+            
             // General Settings Frame
             var generalFrame = Gtk.Frame.New("General Settings");
             var generalBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
@@ -3537,7 +3657,7 @@ namespace Aesir
             var flashToolBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
             var flashToolLabel = Gtk.Label.New("Default Flash Tool:");
             flashToolLabel.SetHalign(Gtk.Align.Start);
-            flashToolLabel.SetSizeRequest(200, -1);
+            flashToolLabel.SetSizeRequest(150, -1);
             var flashToolDropdown = Gtk.DropDown.NewFromStrings(new[] { "Thor", "Odin4", "Heimdall" });
             flashToolDropdown.SetSelected(settings.DefaultFlashTool == "Thor" ? 0u : 
                                         settings.DefaultFlashTool == "Odin4" ? 1u : 2u);
@@ -3558,7 +3678,7 @@ namespace Aesir
             var directoryBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
             var directoryLabel = Gtk.Label.New("Default Directory:");
             directoryLabel.SetHalign(Gtk.Align.Start);
-            directoryLabel.SetSizeRequest(200, -1);
+            directoryLabel.SetSizeRequest(150, -1);
             var directoryEntry = Gtk.Entry.New();
             directoryEntry.SetText(settings.LastUsedDirectory);
             directoryEntry.OnNotify += (sender, args) =>
@@ -3606,86 +3726,24 @@ namespace Aesir
             directoryBox.Append(directoryButton);
             generalBox.Append(directoryBox);
             
-            // Device Check Interval
-            var intervalBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
-            var intervalLabel = Gtk.Label.New("Device Check Interval (ms):");
-            intervalLabel.SetHalign(Gtk.Align.Start);
-            intervalLabel.SetSizeRequest(200, -1);
-            var intervalEntry = Gtk.Entry.New();
-            intervalEntry.SetText(settings.DeviceCheckInterval.ToString());
-            intervalEntry.OnNotify += (sender, args) =>
+            // Auto Check for Updates
+            var autoUpdateBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
+            var autoUpdateLabel = Gtk.Label.New("Auto Check for Updates:");
+            autoUpdateLabel.SetHalign(Gtk.Align.Start);
+            autoUpdateLabel.SetSizeRequest(150, -1);
+            var autoUpdateCheckbox = Gtk.CheckButton.New();
+            autoUpdateCheckbox.SetActive(settings.AutoCheckForUpdates);
+            autoUpdateCheckbox.OnToggled += (sender, args) =>
             {
-                if (args.Pspec.GetName() == "text")
-                {
-                    if (int.TryParse(intervalEntry.GetText(), out int interval) && interval >= 500)
-                    {
-                        settings.DeviceCheckInterval = interval;
-                        settings.Save();
-                    }
-                }
+                settings.AutoCheckForUpdates = autoUpdateCheckbox.GetActive();
+                settings.Save();
             };
-            intervalBox.Append(intervalLabel);
-            intervalBox.Append(intervalEntry);
-            generalBox.Append(intervalBox);
+            autoUpdateBox.Append(autoUpdateLabel);
+            autoUpdateBox.Append(autoUpdateCheckbox);
+            generalBox.Append(autoUpdateBox);
             
             generalFrame.SetChild(generalBox);
             mainVBox.Append(generalFrame);
-            
-            // Flash Options Frame
-            var flashFrame = Gtk.Frame.New("Default Flash Options");
-            var flashBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
-            flashBox.SetMarginTop(15);
-            flashBox.SetMarginBottom(15);
-            flashBox.SetMarginStart(15);
-            flashBox.SetMarginEnd(15);
-            
-            // Auto Reboot
-            var autoRebootCheck = Gtk.CheckButton.NewWithLabel("Auto Reboot");
-            autoRebootCheck.SetActive(settings.AutoReboot);
-            autoRebootCheck.OnToggled += (sender, args) =>
-            {
-                settings.AutoReboot = autoRebootCheck.GetActive();
-                settings.Save();
-                // Update the main UI checkbox if it exists
-                if (parentWindow.autoRebootCheck != null)
-                {
-                    parentWindow.autoRebootCheck.SetActive(settings.AutoReboot);
-                }
-            };
-            flashBox.Append(autoRebootCheck);
-            
-            // Reset Time
-            var resetTimeCheck = Gtk.CheckButton.NewWithLabel("Reset Time");
-            resetTimeCheck.SetActive(settings.ResetTime);
-            resetTimeCheck.OnToggled += (sender, args) =>
-            {
-                settings.ResetTime = resetTimeCheck.GetActive();
-                settings.Save();
-                // Update the main UI checkbox if it exists
-                if (parentWindow.resetTimeCheck != null)
-                {
-                    parentWindow.resetTimeCheck.SetActive(settings.ResetTime);
-                }
-            };
-            flashBox.Append(resetTimeCheck);
-            
-            // Re-Partition
-            var rePartitionCheck = Gtk.CheckButton.NewWithLabel("Re-Partition");
-            rePartitionCheck.SetActive(settings.RePartition);
-            rePartitionCheck.OnToggled += (sender, args) =>
-            {
-                settings.RePartition = rePartitionCheck.GetActive();
-                settings.Save();
-                // Update the main UI checkbox if it exists
-                if (parentWindow.rePartitionCheck != null)
-                {
-                    parentWindow.rePartitionCheck.SetActive(settings.RePartition);
-                }
-            };
-            flashBox.Append(rePartitionCheck);
-            
-            flashFrame.SetChild(flashBox);
-            mainVBox.Append(flashFrame);
             
             scrolled.SetChild(mainVBox);
             SetChild(scrolled);
@@ -3718,6 +3776,8 @@ namespace Aesir
 
         private void CreateCustomAboutDialog()
         {
+            var settings = AppSettings.Load();
+            
             // Create the dialog window
             var dialog = Gtk.Window.New();
             dialog.SetTitle("About Aesir");
@@ -3744,9 +3804,7 @@ namespace Aesir
             // Try to load custom image first, fallback to icon name
             try 
             {
-                // You can put your image in the same directory as the executable
-                // or specify a full path like "/path/to/your/image.png"
-                var imagePath = "assets/Aesir.png"; // Using the Aesir.png image from assets folder
+                var imagePath = "assets/Aesir.png";
                 
                 // Check if file exists in the current directory or try as absolute path
                 if (System.IO.File.Exists(imagePath) || System.IO.Path.IsPathRooted(imagePath))
@@ -3784,15 +3842,14 @@ namespace Aesir
             mainBox.Append(subtitleLabel);
 
             // Version (clickable button)
-            var versionButton = Gtk.Button.NewWithLabel("1.0.0");
+            var versionButton = Gtk.Button.NewWithLabel(settings.CurrentVersion);
             versionButton.AddCssClass("version-button");
             versionButton.AddCssClass("caption");
             versionButton.SetHalign(Gtk.Align.Center);
             versionButton.SetMarginBottom(32);
             versionButton.OnClicked += (sender, args) => {
                 try {
-                    var version = "1.0.0"; // You can make this dynamic later
-                    var releaseUrl = $"https://github.com/daglaroglou/Aesir/releases/tag/v{version}";
+                    var releaseUrl = $"https://github.com/daglaroglou/Aesir/releases/tag/v{settings.CurrentVersion}";
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
                         FileName = releaseUrl,
                         UseShellExecute = true
@@ -3850,6 +3907,28 @@ namespace Aesir
             };
             buttonsBox.Append(issueButton);
 
+            // Donate button
+            var donateButton = Gtk.Button.New();
+            var donateBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 8);
+            var donateIcon = Gtk.Image.NewFromIconName("emblem-favorite-symbolic");
+            donateIcon.SetIconSize(Gtk.IconSize.Normal);
+            var donateLabel = Gtk.Label.New("Donate");
+            donateBox.Append(donateIcon);
+            donateBox.Append(donateLabel);
+            donateBox.SetHalign(Gtk.Align.Center);
+            donateButton.SetChild(donateBox);
+            donateButton.AddCssClass("pill");
+            donateButton.SetHalign(Gtk.Align.Fill);
+            donateButton.OnClicked += (sender, args) => {
+                try {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = "https://github.com/sponsors/daglaroglou",
+                        UseShellExecute = true
+                    });
+                } catch { }
+            };
+            buttonsBox.Append(donateButton);
+
             mainBox.Append(buttonsBox);
 
             // Credits expander
@@ -3864,11 +3943,6 @@ namespace Aesir
             authorLabel.SetHalign(Gtk.Align.Start);
             authorLabel.AddCssClass("body");
             creditsBox.Append(authorLabel);
-            
-            var thorLabel = Gtk.Label.New("Thor Library: TheAirBlow");
-            thorLabel.SetHalign(Gtk.Align.Start);
-            thorLabel.AddCssClass("body");
-            creditsBox.Append(thorLabel);
             
             creditsExpander.SetChild(creditsBox);
             mainBox.Append(creditsExpander);
@@ -3975,6 +4049,96 @@ namespace Aesir
             }
         }
         
+        private async Task<bool> CheckForUpdatesAsync()
+        {
+            try
+            {
+                var settings = AppSettings.Load();
+                using var httpClient = new HttpClient();
+                httpClient.DefaultRequestHeaders.Add("User-Agent", "Aesir-UpdateChecker");
+                
+                var response = await httpClient.GetStringAsync("https://api.github.com/repos/daglaroglou/Aesir/releases/latest");
+                var releaseInfo = JsonConvert.DeserializeObject<dynamic>(response);
+                
+                if (releaseInfo?.tag_name != null)
+                {
+                    var latestVersion = releaseInfo.tag_name.ToString();
+                    var currentVersion = $"v{settings.CurrentVersion}";
+                    
+                    return latestVersion != currentVersion;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Failed to check for updates: {ex.Message}");
+            }
+            
+            return false;
+        }
+        
+        private void ShowUpdateAvailableDialog(OdinMainWindow? parentWindow)
+        {
+            var dialog = Gtk.Window.New();
+            dialog.SetTitle("Update Available");
+            dialog.SetDefaultSize(400, 200);
+            dialog.SetResizable(false);
+            dialog.SetModal(true);
+            if (parentWindow != null)
+            {
+                dialog.SetTransientFor(parentWindow);
+            }
+            
+            var headerBar = Gtk.HeaderBar.New();
+            headerBar.SetTitleWidget(Gtk.Label.New("Update Available"));
+            headerBar.ShowTitleButtons = false;
+            dialog.SetTitlebar(headerBar);
+            
+            var mainBox = Gtk.Box.New(Gtk.Orientation.Vertical, 20);
+            mainBox.SetMarginTop(30);
+            mainBox.SetMarginBottom(30);
+            mainBox.SetMarginStart(30);
+            mainBox.SetMarginEnd(30);
+            
+            var messageLabel = Gtk.Label.New("A new version of Aesir is available.\nWould you like to visit the releases page?");
+            messageLabel.SetJustify(Gtk.Justification.Center);
+            messageLabel.SetHalign(Gtk.Align.Center);
+            mainBox.Append(messageLabel);
+            
+            var buttonBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
+            buttonBox.SetHalign(Gtk.Align.Center);
+            buttonBox.SetMarginTop(20);
+            
+            var noButton = Gtk.Button.NewWithLabel("No");
+            noButton.OnClicked += (sender, args) => dialog.Destroy();
+            
+            var yesButton = Gtk.Button.NewWithLabel("Yes");
+            yesButton.AddCssClass("suggested-action");
+            yesButton.OnClicked += (sender, args) =>
+            {
+                try
+                {
+                    var releaseUrl = "https://github.com/daglaroglou/Aesir/releases/latest";
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = releaseUrl,
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Failed to open browser: {ex.Message}");
+                }
+                dialog.Destroy();
+            };
+            
+            buttonBox.Append(noButton);
+            buttonBox.Append(yesButton);
+            mainBox.Append(buttonBox);
+            
+            dialog.SetChild(mainBox);
+            dialog.Show();
+        }
+        
         public new void Activate()
         {
             // Initialize menu actions
@@ -3983,6 +4147,24 @@ namespace Aesir
             var window = new OdinMainWindow(this);
             AddWindow(window);
             window.Show();
+            
+            // Check for updates on startup if enabled
+            Task.Run(async () =>
+            {
+                var settings = AppSettings.Load();
+                if (settings.AutoCheckForUpdates)
+                {
+                    var updateAvailable = await CheckForUpdatesAsync();
+                    if (updateAvailable)
+                    {
+                        GLib.Functions.IdleAdd(0, () =>
+                        {
+                            ShowUpdateAvailableDialog(window);
+                            return false;
+                        });
+                    }
+                }
+            });
         }
     }
     
