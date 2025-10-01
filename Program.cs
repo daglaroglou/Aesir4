@@ -19,6 +19,50 @@ using Newtonsoft.Json;
 
 namespace Aesir
 {
+    public static class ImageHelper
+    {
+        public static Gtk.Image LoadEmbeddedImage(string resourceName, int pixelSize = 128)
+        {
+            var image = Gtk.Image.New();
+            
+            try
+            {
+                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                using var stream = assembly.GetManifestResourceStream($"Aesir.assets.{resourceName}");
+                
+                if (stream != null)
+                {
+                    // Create a temporary file to load the image
+                    var tempPath = Path.GetTempFileName();
+                    using (var fileStream = File.Create(tempPath))
+                    {
+                        stream.CopyTo(fileStream);
+                    }
+                    
+                    image.SetFromFile(tempPath);
+                    image.SetPixelSize(pixelSize);
+                    
+                    // Clean up temp file
+                    File.Delete(tempPath);
+                }
+                else
+                {
+                    throw new Exception($"Embedded resource not found: {resourceName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load embedded image {resourceName}: {ex.Message}");
+                // Fallback to icon name
+                image.SetFromIconName("application-x-firmware");
+                image.SetIconSize(Gtk.IconSize.Large);
+                image.SetPixelSize(pixelSize);
+            }
+            
+            return image;
+        }
+    }
+
     public class ThorFlashManager
     {
         private IHandler? _handler;
@@ -369,6 +413,8 @@ namespace Aesir
         public string DefaultFlashTool { get; set; } = "Odin4";
         public string LastUsedDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         public bool AutoCheckForUpdates { get; set; } = true;
+        public bool CreateDesktopEntry { get; set; } = true;
+        public bool IsFirstRun { get; set; } = true;
         public string CurrentVersion { get; set; } = "1.0.0";
         
         private static readonly string SettingsPath = Path.Combine(
@@ -412,6 +458,97 @@ namespace Aesir
             catch (Exception ex)
             {
                 Log.Warning($"Failed to save settings: {ex.Message}");
+            }
+        }
+        
+        public async Task<bool> CreateDesktopEntryAsync()
+        {
+            try
+            {
+                // Get the current executable path
+                var executablePath = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(executablePath))
+                {
+                    Log.Warning("Could not determine executable path for desktop entry");
+                    return false;
+                }
+                
+                // Create Aesir config directory if it doesn't exist
+                var configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Aesir");
+                if (!Directory.Exists(configDir))
+                {
+                    Directory.CreateDirectory(configDir);
+                }
+                
+                // Download the icon using wget
+                var iconPath = Path.Combine(configDir, "A.png");
+                var iconUrl = "https://raw.githubusercontent.com/daglaroglou/Aesir/main/assets/A.png";
+                
+                // Use wget to download the icon
+                var wgetProcess = new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "wget",
+                        Arguments = $"-O \"{iconPath}\" \"{iconUrl}\"",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                wgetProcess.Start();
+                await wgetProcess.WaitForExitAsync();
+                
+                if (wgetProcess.ExitCode != 0)
+                {
+                    Log.Warning($"Failed to download icon with wget (exit code: {wgetProcess.ExitCode})");
+                    // Continue anyway, desktop entry will work without icon
+                }
+                
+                // Create desktop entry content
+                var desktopEntryContent = $@"[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Aesir
+Comment=Samsung Firmware Flash Tool
+Exec={executablePath}
+Icon={iconPath}
+Terminal=false
+Categories=Development;System;
+StartupNotify=true
+";
+                
+                // Get the desktop directory
+                var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                var desktopEntryPath = Path.Combine(desktopDir, "Aesir.desktop");
+                
+                // Write the desktop entry
+                await File.WriteAllTextAsync(desktopEntryPath, desktopEntryContent);
+                
+                // Make the desktop entry executable
+                var chmodProcess = new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "chmod",
+                        Arguments = $"+x \"{desktopEntryPath}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                chmodProcess.Start();
+                await chmodProcess.WaitForExitAsync();
+                
+                Log.Information($"Desktop entry created successfully at: {desktopEntryPath}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Failed to create desktop entry: {ex.Message}");
+                return false;
             }
         }
     }
@@ -553,6 +690,9 @@ namespace Aesir
             
             // Connect destroy signal to cleanup background services
             OnDestroy += OnWindowDestroy;
+            
+            // Handle first run setup
+            HandleFirstRunSetup();
         }
         
         private void BuildUI()
@@ -4145,6 +4285,52 @@ namespace Aesir
             // Save settings before closing
             settings?.Save();
         }
+        
+        private void HandleFirstRunSetup()
+        {
+            if (settings.IsFirstRun)
+            {
+                // Mark as no longer first run
+                settings.IsFirstRun = false;
+                settings.Save();
+                
+                // Create desktop entry if enabled
+                if (settings.CreateDesktopEntry)
+                {
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var success = await settings.CreateDesktopEntryAsync();
+                            if (success)
+                            {
+                                GLib.Functions.IdleAdd(0, () =>
+                                {
+                                    LogMessage("<OSM> Desktop entry created successfully on first run");
+                                    return false;
+                                });
+                            }
+                            else
+                            {
+                                GLib.Functions.IdleAdd(0, () =>
+                                {
+                                    LogMessage("<OSM> Failed to create desktop entry on first run");
+                                    return false;
+                                });
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            GLib.Functions.IdleAdd(0, () =>
+                            {
+                                LogMessage($"<OSM> Error creating desktop entry on first run: {ex.Message}");
+                                return false;
+                            });
+                        }
+                    });
+                }
+            }
+        }
     }
     
     public class LoadingWindow : Gtk.Window
@@ -4174,33 +4360,8 @@ namespace Aesir
             mainBox.SetHalign(Gtk.Align.Center);
             mainBox.SetValign(Gtk.Align.Center);
             
-            // Add Aesir logo image
-            var logoImage = Gtk.Image.New();
-            try 
-            {
-                var imagePath = "assets/Aesir.png";
-                
-                // Check if file exists in the current directory or try as absolute path
-                if (System.IO.File.Exists(imagePath) || System.IO.Path.IsPathRooted(imagePath))
-                {
-                    logoImage.SetFromFile(imagePath);
-                    logoImage.SetPixelSize(128);
-                }
-                else
-                {
-                    // Fallback to icon name if custom image not found
-                    logoImage.SetFromIconName("application-x-firmware");
-                    logoImage.SetIconSize(Gtk.IconSize.Large);
-                    logoImage.SetPixelSize(64);
-                }
-            }
-            catch
-            {
-                // Fallback to icon name if there's any error loading the custom image
-                logoImage.SetFromIconName("application-x-firmware");
-                logoImage.SetIconSize(Gtk.IconSize.Large);
-                logoImage.SetPixelSize(64);
-            }
+            // Add Aesir logo image from embedded resources
+            var logoImage = ImageHelper.LoadEmbeddedImage("Aesir.png", 128);
             
             logoImage.SetHalign(Gtk.Align.Center);
             logoImage.SetMarginBottom(15);
@@ -4612,6 +4773,29 @@ namespace Aesir
             autoUpdateBox.Append(checkUpdatesButton);
             generalBox.Append(autoUpdateBox);
             
+            // Create Desktop Entry
+            var desktopEntryBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
+            var desktopEntryLabel = Gtk.Label.New("Create Desktop Entry:");
+            desktopEntryLabel.SetHalign(Gtk.Align.Start);
+            desktopEntryLabel.SetSizeRequest(150, -1);
+            var desktopEntryCheckbox = Gtk.CheckButton.New();
+            desktopEntryCheckbox.SetActive(settings.CreateDesktopEntry);
+            desktopEntryCheckbox.OnToggled += (sender, args) =>
+            {
+                settings.CreateDesktopEntry = desktopEntryCheckbox.GetActive();
+                settings.Save();
+            };
+            
+            // Create desktop entry button
+            var createDesktopEntryButton = Gtk.Button.NewWithLabel("Create Now");
+            createDesktopEntryButton.SetTooltipText("Create desktop entry immediately");
+            createDesktopEntryButton.OnClicked += (sender, args) => OnCreateDesktopEntry(createDesktopEntryButton);
+            
+            desktopEntryBox.Append(desktopEntryLabel);
+            desktopEntryBox.Append(desktopEntryCheckbox);
+            desktopEntryBox.Append(createDesktopEntryButton);
+            generalBox.Append(desktopEntryBox);
+            
             generalFrame.SetChild(generalBox);
             mainVBox.Append(generalFrame);
             
@@ -4701,6 +4885,74 @@ namespace Aesir
                 }
             });
         }
+        
+        private void OnCreateDesktopEntry(Gtk.Button button)
+        {
+            // Disable button and show creating state
+            button.SetSensitive(false);
+            button.SetLabel("Creating...");
+            
+            // Run the desktop entry creation on a background thread
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var success = await settings.CreateDesktopEntryAsync();
+                    
+                    // Update UI on main thread
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        if (success)
+                        {
+                            button.SetLabel("Created!");
+                            button.SetTooltipText("Desktop entry created successfully");
+                        }
+                        else
+                        {
+                            button.SetLabel("Failed");
+                            button.SetTooltipText("Failed to create desktop entry");
+                        }
+                        
+                        // Re-enable button after a delay
+                        Task.Delay(2000).ContinueWith(_ =>
+                        {
+                            GLib.Functions.IdleAdd(0, () =>
+                            {
+                                button.SetLabel("Create Now");
+                                button.SetSensitive(true);
+                                button.SetTooltipText("Create desktop entry immediately");
+                                return false;
+                            });
+                        });
+                        
+                        return false;
+                    });
+                }
+                catch (Exception ex)
+                {
+                    // Update UI on main thread for error case
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        button.SetLabel("Error");
+                        button.SetTooltipText($"Error creating desktop entry: {ex.Message}");
+                        
+                        // Re-enable button after a delay
+                        Task.Delay(2000).ContinueWith(_ =>
+                        {
+                            GLib.Functions.IdleAdd(0, () =>
+                            {
+                                button.SetLabel("Create Now");
+                                button.SetSensitive(true);
+                                button.SetTooltipText("Create desktop entry immediately");
+                                return false;
+                            });
+                        });
+                        
+                        return false;
+                    });
+                }
+            });
+        }
     }
     
     public class AesirApplication : Gtk.Application
@@ -4751,35 +5003,8 @@ namespace Aesir
             mainBox.SetMarginStart(32);
             mainBox.SetMarginEnd(32);
 
-            // App icon (circular) - using custom image
-            var iconImage = Gtk.Image.New();
-            
-            // Try to load custom image first, fallback to icon name
-            try 
-            {
-                var imagePath = "assets/Aesir.png";
-                
-                // Check if file exists in the current directory or try as absolute path
-                if (System.IO.File.Exists(imagePath) || System.IO.Path.IsPathRooted(imagePath))
-                {
-                    iconImage.SetFromFile(imagePath);
-                    iconImage.SetPixelSize(128);
-                }
-                else
-                {
-                    // Fallback to icon name if custom image not found
-                    iconImage.SetFromIconName("application-x-firmware");
-                    iconImage.SetIconSize(Gtk.IconSize.Large);
-                    iconImage.SetPixelSize(128);
-                }
-            }
-            catch
-            {
-                // Fallback to icon name if there's any error loading the custom image
-                iconImage.SetFromIconName("application-x-firmware");
-                iconImage.SetIconSize(Gtk.IconSize.Large);
-                iconImage.SetPixelSize(128);
-            }
+            // App icon - using embedded image
+            var iconImage = ImageHelper.LoadEmbeddedImage("A.png", 128);
             
             // Add the icon directly without circular frame
             iconImage.SetHalign(Gtk.Align.Center);
