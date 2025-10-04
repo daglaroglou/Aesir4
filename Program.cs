@@ -677,13 +677,17 @@ StartupNotify=true
         private List<string> adbLogMessages = new List<string>();
         private List<string> fastbootLogMessages = new List<string>();
         private List<string> fusLogMessages = new List<string>();
+        private List<string> gappsLogMessages = new List<string>();
+        
+        // GAPPS tab controls
+        private Gtk.Label gappsLogLabel = null!;
 
         public OdinMainWindow(Gtk.Application application) : base()
         {
             Application = application;
             Title = "Aesir - Firmware Flash Tool";
             
-            SetDefaultSize(1000, 850);
+            SetDefaultSize(1050, 850);
             
             // Load settings
             settings = AppSettings.Load();
@@ -715,6 +719,11 @@ StartupNotify=true
             LogFusMessage("FUS (Firmware Update Service) initialized");
             LogFusMessage("Samsung Firmware Downloader using Syndical library");
             LogFusMessage("Ready to check and download firmware...");
+            
+            // Initialize GAPPS log
+            LogGappsMessage("GAPPS Downloader initialized");
+            LogGappsMessage("Select your device architecture, Android version, and package variant");
+            LogGappsMessage("Click 'Download' to open the download page for your selection");
             
             // Start background services
             StartBackgroundServices();
@@ -1608,64 +1617,180 @@ StartupNotify=true
         
         private Gtk.Widget CreateGappsTab()
         {
-            var mainVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
+            var mainVBox = Gtk.Box.New(Gtk.Orientation.Vertical, 8);
             mainVBox.SetMarginTop(10);
             mainVBox.SetMarginBottom(10);
             mainVBox.SetMarginStart(10);
             mainVBox.SetMarginEnd(10);
             
             var titleLabel = Gtk.Label.New(null);
-            titleLabel.SetMarkup("<span size='16000' weight='bold'>Google Apps (GAPPS) Management</span>");
-            titleLabel.SetMarginBottom(20);
+            titleLabel.SetMarkup("<span size='12000' weight='bold'>GAPPS Downloader</span>");
+            titleLabel.SetMarginBottom(5);
             mainVBox.Append(titleLabel);
             
-            var descLabel = Gtk.Label.New("This section provides links and information for downloading Google Apps packages.");
-            descLabel.SetWrapMode(Pango.WrapMode.Word);
-            descLabel.SetMarginBottom(15);
-            mainVBox.Append(descLabel);
+            // Create a 2x2 grid for GAPPS sections
+            var gappsGrid = Gtk.Grid.New();
+            gappsGrid.SetColumnHomogeneous(true);
+            gappsGrid.SetRowHomogeneous(true);
+            gappsGrid.SetColumnSpacing(8);
+            gappsGrid.SetRowSpacing(8);
             
-            // GAPPS Download Links
-            var linksFrame = Gtk.Frame.New("GAPPS Download Sources");
-            var linksBox = Gtk.Box.New(Gtk.Orientation.Vertical, 10);
-            linksBox.SetMarginTop(10);
-            linksBox.SetMarginBottom(10);
-            linksBox.SetMarginStart(10);
-            linksBox.SetMarginEnd(10);
+            // Top Row - OpenGApps and BiTGApps
+            var openGappsFrame = CreateGappsSection(
+                "OpenGApps",
+                "https://opengapps.org/",
+                new[] {
+                    ("Platform", new[] { "ARM", "ARM64", "x86", "x86_64" }),
+                    ("Android", new[] { "11.0", "10.0", "9.0", "8.1", "8.0", "7.1", "7.0", "6.0", "5.1", "5.0", "4.4" }),
+                    ("Variant", new[] { "pico", "nano", "micro", "mini", "full", "stock", "super", "aroma", "tvstock", "tvmini" })
+                },
+                "Modular GApps with multiple variants. Last updated Feb 2022. Supports Android 4.4-11.0. Variants from minimal (pico) to complete (super/aroma)."
+            );
+            gappsGrid.Attach(openGappsFrame, 0, 0, 1, 1);
             
-            var sources = new[]
-            {
-                ("OpenGApps", "https://opengapps.org/", "Comprehensive Google Apps packages"),
-                ("BiTGApps", "https://bitgapps.github.io/", "Lightweight Google Apps"),
-                ("MindTheGapps", "https://wiki.lineageos.org/gapps.html", "LineageOS recommended GAPPS"),
-                ("NikGApps", "https://nikgapps.com/", "Customizable Google Apps packages")
-            };
+            var bitGappsFrame = CreateGappsSection(
+                "BiTGApps",
+                "https://bitgapps.github.io/",
+                new[] {
+                    ("Arch", new[] { "arm", "arm64" }),
+                    ("Android", new[] { "15", "14", "13", "12.1", "12", "11", "10", "9" }),
+                    ("Variant", new[] { "core", "basic", "minimal" })
+                },
+                "Lightweight and battery-efficient. Supports Android 9-15. Core: essential services. Basic: core + Play Store. Minimal: basic + common apps."
+            );
+            gappsGrid.Attach(bitGappsFrame, 1, 0, 1, 1);
             
-            foreach (var (name, url, desc) in sources)
-            {
-                var sourceBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 10);
-                
-                var infoBox = Gtk.Box.New(Gtk.Orientation.Vertical, 2);
-                var nameLabel = Gtk.Label.New(null);
-                nameLabel.SetMarkup($"<span weight='bold'>{name}</span>");
-                nameLabel.Xalign = 0;
-                var descLabel2 = Gtk.Label.New(desc);
-                descLabel2.Xalign = 0;
-                descLabel2.AddCssClass("dim-label");
-                infoBox.Append(nameLabel);
-                infoBox.Append(descLabel2);
-                
-                var openButton = Gtk.Button.NewWithLabel("Open");
-                openButton.OnClicked += (s, e) => OpenUrl(url);
-                
-                sourceBox.Append(infoBox);
-                sourceBox.Append(openButton);
-                linksBox.Append(sourceBox);
-            }
+            // Bottom Row - MindTheGapps and NikGApps
+            var mindGappsFrame = CreateGappsSection(
+                "MindTheGapps",
+                "https://github.com/MindTheGapps/",
+                new[] {
+                    ("Arch", new[] { "arm", "arm64", "x86", "x86_64" }),
+                    ("Android", new[] { "15.0", "14.0", "13.0", "12.1", "12.0", "11.0", "10.0" })
+                },
+                "LineageOS recommended. Supports Android 10-15. Balanced package with essential Google apps. Single variant optimized for compatibility."
+            );
+            gappsGrid.Attach(mindGappsFrame, 0, 1, 1, 1);
             
-            linksFrame.Child = linksBox;
-            mainVBox.Append(linksFrame);
+            var nikGappsFrame = CreateGappsSection(
+                "NikGApps",
+                "https://nikgapps.com/",
+                new[] {
+                    ("Arch", new[] { "arm64" }),
+                    ("Android", new[] { "16", "15", "14", "13", "12.1", "12", "11", "10" }),
+                    ("Variant", new[] { "core", "basic", "omni", "stock", "full", "go" })
+                },
+                "Highly customizable with addon support. Supports Android 10-16. Regular updates. Core: minimal. Basic: essential. Omni: popular. Full: most. Go: Android Go."
+            );
+            gappsGrid.Attach(nikGappsFrame, 1, 1, 1, 1);
+            
+            mainVBox.Append(gappsGrid);
+            
+            // Bottom section - Log output (matching other tabs)
+            var gappsLogFrame = Gtk.Frame.New("GAPPS Log");
+            var gappsLogScrolled = Gtk.ScrolledWindow.New();
+            gappsLogScrolled.SetPolicy(Gtk.PolicyType.Automatic, Gtk.PolicyType.Automatic);
+            gappsLogScrolled.SetVexpand(true);
+            gappsLogScrolled.SetHexpand(true);
+            
+            gappsLogLabel = Gtk.Label.New("");
+            gappsLogLabel.Xalign = 0;
+            gappsLogLabel.Yalign = 0;
+            gappsLogLabel.AddCssClass("monospace");
+            gappsLogLabel.SetSelectable(true);
+            gappsLogLabel.SetWrapMode(Pango.WrapMode.Word);
+            
+            gappsLogScrolled.Child = gappsLogLabel;
+            gappsLogFrame.Child = gappsLogScrolled;
+            
+            // Make the log frame expand to fill remaining space
+            gappsLogFrame.SetVexpand(true);
+            gappsLogFrame.SetHexpand(true);
+            mainVBox.Append(gappsLogFrame);
             
             return mainVBox;
+        }
+        
+        private Gtk.Frame CreateGappsSection(string name, string website, (string label, string[] options)[] dropdowns, string description)
+        {
+            var frame = Gtk.Frame.New(name);
+            var vbox = Gtk.Box.New(Gtk.Orientation.Vertical, 3);
+            vbox.SetMarginTop(5);
+            vbox.SetMarginBottom(5);
+            vbox.SetMarginStart(5);
+            vbox.SetMarginEnd(5);
+            
+            // Description
+            var descLabel = Gtk.Label.New(description);
+            descLabel.SetWrapMode(Pango.WrapMode.WordChar);
+            descLabel.SetWrap(true);
+            descLabel.SetMaxWidthChars(40);
+            descLabel.Xalign = 0;
+            descLabel.SetJustify(Gtk.Justification.Left);
+            descLabel.AddCssClass("caption");
+            descLabel.SetMarginBottom(3);
+            vbox.Append(descLabel);
+            
+            // Store dropdown widgets
+            var dropdownWidgets = new List<Gtk.DropDown>();
+            
+            // Create dropdowns with aligned labels
+            foreach (var (label, options) in dropdowns)
+            {
+                var hbox = Gtk.Box.New(Gtk.Orientation.Horizontal, 5);
+                
+                var labelWidget = Gtk.Label.New($"{label}:");
+                labelWidget.SetSizeRequest(70, -1); // Fixed width for alignment
+                labelWidget.Xalign = 1; // Right-align the label text
+                labelWidget.SetHalign(Gtk.Align.End);
+                hbox.Append(labelWidget);
+                
+                var stringList = Gtk.StringList.New(options);
+                var dropdown = Gtk.DropDown.New(stringList, null);
+                dropdown.SetHexpand(true);
+                dropdownWidgets.Add(dropdown);
+                hbox.Append(dropdown);
+                
+                vbox.Append(hbox);
+            }
+            
+            // Buttons row
+            var buttonBox = Gtk.Box.New(Gtk.Orientation.Horizontal, 3);
+            buttonBox.SetMarginTop(3);
+            buttonBox.SetHomogeneous(true);
+            
+            var websiteButton = Gtk.Button.NewWithLabel("Website");
+            websiteButton.OnClicked += (s, e) => OpenUrl(website);
+            buttonBox.Append(websiteButton);
+            
+            var downloadButton = Gtk.Button.NewWithLabel("Download");
+            downloadButton.AddCssClass("suggested-action");
+            downloadButton.OnClicked += (s, e) => {
+                var selections = dropdownWidgets.Select(d => {
+                    var model = d.GetModel() as Gtk.StringList;
+                    var selected = d.GetSelected();
+                    return model?.GetString(selected) ?? "";
+                }).ToArray();
+                
+                DownloadGapps(name, selections, website);
+            };
+            buttonBox.Append(downloadButton);
+            
+            vbox.Append(buttonBox);
+            
+            frame.Child = vbox;
+            return frame;
+        }
+        
+        private void DownloadGapps(string gappsName, string[] selections, string website)
+        {
+            var selectionText = string.Join(", ", selections);
+            LogGappsMessage($"Preparing to download {gappsName}");
+            LogGappsMessage($"Selected options: {selectionText}");
+            LogGappsMessage($"Opening download page: {website}");
+            
+            // Open the website
+            OpenUrl(website);
         }
         
         private Gtk.Widget CreateFusTab()
@@ -4495,6 +4620,23 @@ StartupNotify=true
                     fusLogMessages.RemoveAt(0);
                 }
                 fusLogLabel.SetText(string.Join("\n", fusLogMessages));
+                return false; // Don't repeat
+            });
+        }
+        
+        private void LogGappsMessage(string message)
+        {
+            var timestamp = DateTime.Now.ToString("[HH:mm] > ");
+            
+            // Ensure UI updates happen on the main thread
+            GLib.Functions.IdleAdd(0, () =>
+            {
+                gappsLogMessages.Add(timestamp + message);
+                if (gappsLogMessages.Count > 100)
+                {
+                    gappsLogMessages.RemoveAt(0);
+                }
+                gappsLogLabel.SetText(string.Join("\n", gappsLogMessages));
                 return false; // Don't repeat
             });
         }
