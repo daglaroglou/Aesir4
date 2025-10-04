@@ -8,3 +8,6 @@
 [submodule "FlashTools/OdinV4"]
 	path = FlashTools/OdinV4
 	url = https://github.com/Adrilaw/OdinV4
+[submodule "FlashTools/Syndical"]
+	path = FlashTools/Syndical
+	url = https://github.com/Samsung-Loki/Syndical.git
