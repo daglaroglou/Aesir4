@@ -64,6 +64,443 @@ namespace Aesir
         }
     }
 
+    public class HeimdallFlashManager
+    {
+        private string _heimdallPath = "heimdall";
+        
+        public delegate void LogMessageDelegate(string message);
+        public event LogMessageDelegate? OnLogMessage;
+        
+        public delegate void ProgressDelegate(int percentage, string message);
+        public event ProgressDelegate? OnProgress;
+        
+        public HeimdallFlashManager(string heimdallPath = "heimdall")
+        {
+            _heimdallPath = string.IsNullOrEmpty(heimdallPath) ? "heimdall" : heimdallPath;
+        }
+        
+        public async Task<bool> CheckAvailabilityAsync()
+        {
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "which",
+                        Arguments = _heimdallPath,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
+                {
+                    // Heimdall found, return success silently
+                    return true;
+                }
+                
+                // Heimdall not found, return false silently
+                return false;
+            }
+            catch
+            {
+                // Silently fail - availability check failed
+                return false;
+            }
+        }
+        
+        public async Task<bool> DetectDeviceAsync()
+        {
+            try
+            {
+                // Device detection runs without sudo for speed
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = _heimdallPath,
+                        Arguments = "detect",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    // Device detected - return success without logging
+                    return true;
+                }
+                else
+                {
+                    // Device not detected - fail silently
+                    return false;
+                }
+            }
+            catch
+            {
+                // Device detection exception - fail silently
+                return false;
+            }
+        }
+        
+        public async Task<string?> GetPitInfoAsync()
+        {
+            try
+            {
+                OnLogMessage?.Invoke("Retrieving PIT (Partition Information Table)...");
+                
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = _heimdallPath,
+                        Arguments = "print-pit --no-reboot --stdout-errors",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0 && !string.IsNullOrEmpty(output))
+                {
+                    OnLogMessage?.Invoke("PIT information retrieved successfully");
+                    return output;
+                }
+                else
+                {
+                    OnLogMessage?.Invoke("Failed to retrieve PIT information");
+                    if (!string.IsNullOrEmpty(error))
+                        OnLogMessage?.Invoke($"Error: {error.Trim()}");
+                    return null;
+                }
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to get PIT info: {ex.Message}");
+                return null;
+            }
+        }
+        
+        public async Task<bool> DownloadPitAsync(string outputPath)
+        {
+            try
+            {
+                OnLogMessage?.Invoke($"Downloading PIT to: {outputPath}");
+                
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = _heimdallPath,
+                        Arguments = $"download-pit --output \"{outputPath}\" --no-reboot --stdout-errors",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0 && File.Exists(outputPath))
+                {
+                    OnLogMessage?.Invoke($"PIT file downloaded successfully to: {outputPath}");
+                    return true;
+                }
+                else
+                {
+                    OnLogMessage?.Invoke("Failed to download PIT file");
+                    if (!string.IsNullOrEmpty(error))
+                        OnLogMessage?.Invoke($"Error: {error.Trim()}");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to download PIT: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public async Task<bool> FlashPartitionAsync(string partitionName, string filePath, bool noReboot = true)
+        {
+            try
+            {
+                if (!File.Exists(filePath))
+                {
+                    OnLogMessage?.Invoke($"ERROR: File not found: {filePath}");
+                    return false;
+                }
+                
+                OnLogMessage?.Invoke($"Flashing {partitionName} partition with {Path.GetFileName(filePath)}...");
+                OnProgress?.Invoke(0, $"Starting flash: {partitionName}");
+                
+                var arguments = $"flash --{partitionName.ToUpper()} \"{filePath}\"";
+                if (noReboot)
+                    arguments += " --no-reboot";
+                arguments += " --stdout-errors";
+                
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = _heimdallPath,
+                        Arguments = arguments,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                var lastProgress = 0;
+                process.OutputDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        OnLogMessage?.Invoke(e.Data);
+                        
+                        // Try to parse progress from Heimdall output
+                        if (TryParseHeimdallProgress(e.Data, out var progress, out var message))
+                        {
+                            if (progress != lastProgress)
+                            {
+                                lastProgress = progress;
+                                OnProgress?.Invoke(progress, message);
+                            }
+                        }
+                    }
+                };
+                
+                process.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        OnLogMessage?.Invoke($"Error: {e.Data}");
+                    }
+                };
+                
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    OnLogMessage?.Invoke($"Successfully flashed {partitionName} partition!");
+                    OnProgress?.Invoke(100, $"Completed: {partitionName}");
+                    return true;
+                }
+                else
+                {
+                    OnLogMessage?.Invoke($"Failed to flash {partitionName} partition (exit code: {process.ExitCode})");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Flash operation failed: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public async Task<bool> FlashMultiplePartitionsAsync(Dictionary<string, string> partitions, bool noReboot = false)
+        {
+            try
+            {
+                OnLogMessage?.Invoke("Starting multi-partition flash operation...");
+                
+                // Build arguments
+                var arguments = "flash";
+                foreach (var partition in partitions)
+                {
+                    if (!File.Exists(partition.Value))
+                    {
+                        OnLogMessage?.Invoke($"ERROR: File not found: {partition.Value}");
+                        return false;
+                    }
+                    arguments += $" --{partition.Key.ToUpper()} \"{partition.Value}\"";
+                }
+                
+                if (noReboot)
+                    arguments += " --no-reboot";
+                arguments += " --stdout-errors";
+                
+                OnLogMessage?.Invoke($"Flash command: heimdall {arguments}");
+                OnProgress?.Invoke(0, "Starting flash operation");
+                
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = _heimdallPath,
+                        Arguments = arguments,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                var lastProgress = 0;
+                process.OutputDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        OnLogMessage?.Invoke(e.Data);
+                        
+                        // Try to parse progress
+                        if (TryParseHeimdallProgress(e.Data, out var progress, out var message))
+                        {
+                            if (progress != lastProgress)
+                            {
+                                lastProgress = progress;
+                                OnProgress?.Invoke(progress, message);
+                            }
+                        }
+                    }
+                };
+                
+                process.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        OnLogMessage?.Invoke($"Error: {e.Data}");
+                    }
+                };
+                
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    OnLogMessage?.Invoke("Flash operation completed successfully!");
+                    OnProgress?.Invoke(100, "Flash complete");
+                    return true;
+                }
+                else
+                {
+                    OnLogMessage?.Invoke($"Flash operation failed (exit code: {process.ExitCode})");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Flash operation failed: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public async Task<bool> RebootDeviceAsync()
+        {
+            try
+            {
+                OnLogMessage?.Invoke("Rebooting device...");
+                
+                // Heimdall doesn't have a specific reboot command, but we can use close-pc-screen
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = _heimdallPath,
+                        Arguments = "close-pc-screen --stdout-errors",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                OnLogMessage?.Invoke("Reboot command sent");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OnLogMessage?.Invoke($"ERROR: Failed to reboot device: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private bool TryParseHeimdallProgress(string output, out int progress, out string message)
+        {
+            progress = 0;
+            message = "";
+            
+            try
+            {
+                // Heimdall progress patterns:
+                // "Uploading: 45%"
+                // "Downloading: 67%"
+                // "Sending: 89%"
+                
+                var patterns = new[]
+                {
+                    @"Uploading:\s*(\d+)%",
+                    @"Downloading:\s*(\d+)%",
+                    @"Sending:\s*(\d+)%",
+                    @"(\d+)%",
+                };
+                
+                foreach (var pattern in patterns)
+                {
+                    var match = Regex.Match(output, pattern);
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out progress))
+                    {
+                        if (progress >= 0 && progress <= 100)
+                        {
+                            if (output.Contains("Uploading"))
+                                message = "Uploading";
+                            else if (output.Contains("Downloading"))
+                                message = "Downloading";
+                            else if (output.Contains("Sending"))
+                                message = "Sending";
+                            else
+                                message = "Processing";
+                            
+                            return true;
+                        }
+                    }
+                }
+                
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
     public class ThorFlashManager
     {
         private IHandler? _handler;
@@ -595,8 +1032,9 @@ StartupNotify=true
         private Gtk.Label comPortLabel = null!;
         private Gtk.Label timeLabel = null!;
         
-        // Thor flash manager
+        // Flash managers
         private ThorFlashManager? thorFlashManager = null!;
+        private HeimdallFlashManager? heimdallFlashManager = null!;
         private Gtk.ProgressBar? progressBar = null!;
         
         // Settings
@@ -688,6 +1126,7 @@ StartupNotify=true
             Title = "Aesir - Firmware Flash Tool";
             
             SetDefaultSize(1050, 850);
+            SetSizeRequest(1050, 764); // Set minimum size to avoid GTK warning
             
             // Load settings
             settings = AppSettings.Load();
@@ -696,7 +1135,6 @@ StartupNotify=true
             BuildUI();
             ApplyGnomeStyles();
             ConnectSignals();
-            InitializeThor();
             _ = CheckOdin4Availability(); // Fire and forget async call
             
             // Initialize Odin log
@@ -2161,6 +2599,9 @@ StartupNotify=true
             startButton.OnClicked += OnStartClicked;
             resetButton.OnClicked += OnResetClicked;
             
+            // Initialize flash managers
+            InitializeFlashManagers();
+            
             // Checkbox toggle events
             blCheckButton.OnToggled += (sender, e) => CheckStartButtonState();
             apCheckButton.OnToggled += (sender, e) => CheckStartButtonState();
@@ -2314,10 +2755,11 @@ StartupNotify=true
             startButton.Sensitive = canStart;
         }
         
-        private async void InitializeThor()
+        private void InitializeFlashManagers()
         {
             try
             {
+                // Initialize Thor
                 thorFlashManager = new ThorFlashManager();
                 thorFlashManager.OnLogMessage += (message) => LogMessage($"<THOR> {message}");
                 thorFlashManager.OnProgress += (percentage, message) =>
@@ -2330,10 +2772,28 @@ StartupNotify=true
                     }
                 };
                 
+                // Initialize Heimdall
+                heimdallFlashManager = new HeimdallFlashManager(settings.HeimdallPath);
+                heimdallFlashManager.OnLogMessage += (message) => LogMessage($"<HEIMDALL> {message}");
+                heimdallFlashManager.OnProgress += (percentage, message) =>
+                {
+                    // Update progress on UI thread
+                    GLib.Functions.IdleAdd(0, () =>
+                    {
+                        if (progressBar != null)
+                        {
+                            progressBar.SetFraction(percentage / 100.0);
+                            progressBar.SetText($"{percentage}% - {message}");
+                        }
+                        return false;
+                    });
+                };
+                
+                LogMessage("<OSM> Flash managers initialized");
             }
             catch (Exception ex)
             {
-                LogMessage($"<OSM> ERROR: Failed to initialize Thor: {ex.Message}");
+                LogMessage($"<OSM> ERROR: Failed to initialize flash managers: {ex.Message}");
             }
         }
         
@@ -2534,10 +2994,14 @@ StartupNotify=true
             
             deviceStatusLabel.SetText("Device Status: Checking connection...");
             
-            // Check if Odin4 is available and use it preferentially
-            if (isOdin4Available)
+            // Route to appropriate flash handler based on selected tool
+            if (selectedFlashTool == FlashTool.Odin4 && isOdin4Available)
             {
                 await HandleOdin4Flashing(files);
+            }
+            else if (selectedFlashTool == FlashTool.Heimdall)
+            {
+                await HandleHeimdallFlashing(files);
             }
             else if (selectedFlashTool == FlashTool.Thor)
             {
@@ -2545,7 +3009,7 @@ StartupNotify=true
             }
             else
             {
-                // Check for device connection using selected flash tool
+                LogMessage($"<OSM> ERROR: {selectedFlashTool} is not available or not selected");
                 CheckDeviceConnection();
             }
         }
@@ -2714,6 +3178,124 @@ StartupNotify=true
             }
         }
         
+        private async Task HandleHeimdallFlashing(Dictionary<string, string> files)
+        {
+            try
+            {
+                if (heimdallFlashManager == null)
+                {
+                    LogMessage("<OSM> ERROR: Heimdall flash manager not initialized");
+                    return;
+                }
+                
+                startButton.Sensitive = false;
+                
+                // Check Heimdall availability
+                LogMessage("<OSM> Checking Heimdall availability...");
+                if (!await heimdallFlashManager.CheckAvailabilityAsync())
+                {
+                    LogMessage("<OSM> ERROR: Heimdall is not available");
+                    LogMessage("<OSM> Please install Heimdall or specify the correct path in Settings");
+                    startButton.Sensitive = true;
+                    return;
+                }
+                
+                // Start flashing timer
+                isFlashing = true;
+                flashStartTime = DateTime.Now;
+                
+                deviceStatusLabel.SetText("Device Status: Flashing with Heimdall");
+                
+                // Initialize progress bar
+                progressBar?.SetFraction(0.0);
+                progressBar?.SetText("Starting Heimdall...");
+                
+                // Execute Heimdall command (will try without sudo first, then with sudo if needed)
+                var success = await ExecuteHeimdallFlashWithFallback(files);
+                
+                if (success)
+                {
+                    deviceStatusLabel.SetText("Device Status: Flash Complete");
+                    progressBar?.SetFraction(1.0);
+                    progressBar?.SetText("Flash Complete!");
+                }
+                else
+                {
+                    deviceStatusLabel.SetText("Device Status: Flash Failed");
+                }
+                
+                // Stop flashing timer
+                isFlashing = false;
+                startButton.Sensitive = true;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Heimdall flash operation failed: {ex.Message}");
+                deviceStatusLabel.SetText("Device Status: Error");
+                isFlashing = false;
+                startButton.Sensitive = true;
+            }
+        }
+                
+        
+        private async Task<bool> ExecuteHeimdallFlashWithFallback(Dictionary<string, string> files)
+        {
+            try
+            {
+                // Build partition map for Heimdall
+                var partitionsToFlash = new Dictionary<string, string>();
+                
+                if (blCheckButton.Active && !string.IsNullOrEmpty(files["BL"]))
+                    partitionsToFlash["BOOTLOADER"] = files["BL"];
+                
+                if (apCheckButton.Active && !string.IsNullOrEmpty(files["AP"]))
+                    partitionsToFlash["SYSTEM"] = files["AP"];
+                
+                if (cpCheckButton.Active && !string.IsNullOrEmpty(files["CP"]))
+                    partitionsToFlash["MODEM"] = files["CP"];
+                
+                if (cscCheckButton.Active && !string.IsNullOrEmpty(files["CSC"]))
+                    partitionsToFlash["CSC"] = files["CSC"];
+                
+                if (userdataCheckButton.Active && !string.IsNullOrEmpty(files["USERDATA"]))
+                    partitionsToFlash["USERDATA"] = files["USERDATA"];
+                
+                if (partitionsToFlash.Count == 0)
+                {
+                    LogMessage("<OSM> ERROR: No partitions selected for flashing");
+                    return false;
+                }
+                
+                // Build Heimdall arguments
+                var heimdallArgs = "flash";
+                foreach (var partition in partitionsToFlash)
+                {
+                    heimdallArgs += $" --{partition.Key.ToUpper()} \"{partition.Value}\"";
+                }
+                heimdallArgs += " --stdout-errors";
+                
+                // Always use sudo for Heimdall
+                LogMessage("<OSM> Heimdall requires root privileges");
+                
+                // Prompt for sudo password
+                if (!await PromptForSudoPasswordForHeimdall())
+                {
+                    LogMessage("<OSM> ERROR: Root privileges required for Heimdall");
+                    return false;
+                }
+                
+                LogMessage("<OSM> Executing Heimdall with sudo...");
+                var success = await TryExecuteHeimdall(true, heimdallArgs);
+                
+                return success;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Failed to execute Heimdall: {ex.Message}");
+                return false;
+            }
+        }
+        
         private async void CheckDeviceConnection()
         {
             try
@@ -2736,8 +3318,26 @@ StartupNotify=true
                         return;
                     }
                 }
+                
+                // Use Heimdall detection if selected
+                if (selectedFlashTool == FlashTool.Heimdall && heimdallFlashManager != null)
+                {
+                    bool detected = await heimdallFlashManager.DetectDeviceAsync();
+                    if (detected)
+                    {
+                        deviceStatusLabel.SetText($"Device Status: Ready (Heimdall)");
+                        comPortLabel.SetText($"Connection: USB (Heimdall)");
+                        return;
+                    }
+                    else
+                    {
+                        deviceStatusLabel.SetText("Device Status: Not detected");
+                        comPortLabel.SetText("Connection: None");
+                        return;
+                    }
+                }
 
-                // Fallback to lsusb for other flash tools or when Odin4 is not available
+                // Fallback to lsusb for other flash tools or when specific tool is not available
                 var process = new Process
                 {
                     StartInfo = new ProcessStartInfo
@@ -3050,6 +3650,301 @@ StartupNotify=true
             catch (Exception ex)
             {
                 LogMessage($"<OSM> ERROR: Terminal authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> PromptForSudoPasswordForHeimdall()
+        {
+            try
+            {
+                LogMessage("<OSM> Heimdall requires root privileges");
+                
+                // First check if zenity is available
+                var zenityCheck = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "which",
+                        Arguments = "zenity",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                zenityCheck.Start();
+                await zenityCheck.WaitForExitAsync();
+                
+                if (zenityCheck.ExitCode == 0)
+                {
+                    // Use zenity for password prompt
+                    LogMessage("<OSM> Using GUI password prompt");
+                    return await PromptSudoWithZenityForHeimdall();
+                }
+                else
+                {
+                    // Fall back to terminal prompt
+                    LogMessage("<OSM> Zenity not available, using terminal prompt");
+                    LogMessage("<OSM> Please enter your sudo password in the terminal when prompted");
+                    return await PromptSudoWithTerminalForHeimdall();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Sudo authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> PromptSudoWithZenityForHeimdall()
+        {
+            try
+            {
+                // Get password using zenity
+                var zenityProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "zenity",
+                        Arguments = "--password --title=\"Aesir - Sudo Authentication\" --text=\"Heimdall requires root privileges to access USB devices.\\nPlease enter your password:\"",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                zenityProcess.Start();
+                var password = await zenityProcess.StandardOutput.ReadToEndAsync();
+                await zenityProcess.WaitForExitAsync();
+                
+                if (zenityProcess.ExitCode != 0)
+                {
+                    LogMessage("<OSM> User cancelled password dialog");
+                    return false;
+                }
+                
+                // Validate the password with sudo
+                var sudoProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "sudo",
+                        Arguments = "-S -v",
+                        UseShellExecute = false,
+                        RedirectStandardInput = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                sudoProcess.Start();
+                await sudoProcess.StandardInput.WriteLineAsync(password.Trim());
+                sudoProcess.StandardInput.Close();
+                await sudoProcess.WaitForExitAsync();
+                
+                if (sudoProcess.ExitCode == 0)
+                {
+                    LogMessage("<OSM> Sudo authentication successful");
+                    return true;
+                }
+                else
+                {
+                    LogMessage("<OSM> Sudo authentication failed - incorrect password");
+                    
+                    // Show error dialog
+                    var errorProcess = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "zenity",
+                            Arguments = "--error --title=\"Aesir - Authentication Failed\" --text=\"Incorrect password. Please try again.\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+                    errorProcess.Start();
+                    await errorProcess.WaitForExitAsync();
+                    
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Zenity authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> PromptSudoWithTerminalForHeimdall()
+        {
+            try
+            {
+                // Test sudo access by running a simple command
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "sudo",
+                        Arguments = "-v",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = false
+                    }
+                };
+                
+                process.Start();
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    LogMessage("<OSM> Sudo authentication successful");
+                    return true;
+                }
+                else
+                {
+                    LogMessage("<OSM> Sudo authentication failed");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Terminal authentication error: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private async Task<bool> TryExecuteHeimdall(bool useSudo, string commandArgs)
+        {
+            try
+            {
+                var heimdallPath = string.IsNullOrEmpty(settings.HeimdallPath) ? "heimdall" : settings.HeimdallPath;
+                
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = useSudo ? "sudo" : heimdallPath,
+                        Arguments = useSudo ? $"{heimdallPath} {commandArgs}" : commandArgs,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.OutputDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        // Parse progress and update progress bar
+                        if (TryParseHeimdallProgress(e.Data, out var progress, out var message))
+                        {
+                            GLib.Functions.IdleAdd(0, () =>
+                            {
+                                progressBar?.SetFraction(progress / 100.0);
+                                progressBar?.SetText($"{progress}% - {message}");
+                                return false;
+                            });
+                        }
+                        LogMessage($"<HEIMDALL> {e.Data}");
+                    }
+                };
+                
+                process.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        // Check for permission errors or device errors
+                        if (e.Data.Contains("permission") || e.Data.Contains("access") || 
+                            e.Data.Contains("denied") || e.Data.Contains("root"))
+                        {
+                            LogMessage($"<HEIMDALL> Permission issue: {e.Data}");
+                        }
+                        else if (e.Data.Contains("ERROR") || e.Data.Contains("Failed"))
+                        {
+                            LogMessage($"<HEIMDALL> Error: {e.Data}");
+                        }
+                        else
+                        {
+                            LogMessage($"<HEIMDALL> {e.Data}");
+                        }
+                    }
+                };
+                
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                
+                await process.WaitForExitAsync();
+                
+                if (process.ExitCode == 0)
+                {
+                    LogMessage($"<OSM> Heimdall execution successful {(useSudo ? "with sudo" : "without sudo")}");
+                    return true;
+                }
+                else
+                {
+                    LogMessage($"<OSM> Heimdall execution failed {(useSudo ? "with sudo" : "without sudo")} - exit code {process.ExitCode}");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"<OSM> ERROR: Failed to execute Heimdall {(useSudo ? "with sudo" : "without sudo")}: {ex.Message}");
+                return false;
+            }
+        }
+        
+        private bool TryParseHeimdallProgress(string output, out int progress, out string message)
+        {
+            progress = 0;
+            message = "";
+            
+            try
+            {
+                // Heimdall progress patterns:
+                // "Uploading: 45%"
+                // "Downloading: 67%"
+                // "Sending: 89%"
+                
+                var patterns = new[]
+                {
+                    @"Uploading:\s*(\d+)%",
+                    @"Downloading:\s*(\d+)%",
+                    @"Sending:\s*(\d+)%",
+                    @"(\d+)%",
+                };
+                
+                foreach (var pattern in patterns)
+                {
+                    var match = Regex.Match(output, pattern);
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out progress))
+                    {
+                        if (progress >= 0 && progress <= 100)
+                        {
+                            if (output.Contains("Uploading"))
+                                message = "Uploading";
+                            else if (output.Contains("Downloading"))
+                                message = "Downloading";
+                            else if (output.Contains("Sending"))
+                                message = "Sending";
+                            else
+                                message = "Processing";
+                            
+                            return true;
+                        }
+                    }
+                }
+                
+                return false;
+            }
+            catch
+            {
                 return false;
             }
         }
