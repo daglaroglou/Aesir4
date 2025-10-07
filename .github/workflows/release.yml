@@ -1,0 +1,217 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build'
+        required: true
+        type: string
+      arch:
+        description: 'Architecture to build for'
+        required: true
+        default: 'All'
+        type: choice
+        options:
+          - All
+          - amd64
+          - aarch64
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  setup:
+    name: Setup Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          if [ "${{ github.event.inputs.arch }}" == "All" ]; then
+            echo 'matrix=["amd64", "aarch64"]' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix=["${{ github.event.inputs.arch }}"]' >> $GITHUB_OUTPUT
+          fi
+
+  notify_workflow:
+    name: Notify Build Start
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram Notification
+        run: |
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -F message_thread_id="${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}" \
+            -F text="
+            🚀 Build started for Kernels! 
+            📦 *Repository:* [${{ github.repository }}](https://github.com/${{ github.repository }})
+            🗂️ *Branch:* ${{ github.ref_name }}
+            🏗️ *Arch:* ${{ github.event.inputs.arch }}
+            ✏️ *Commit:* [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            [🔗 View GitHub Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            -F parse_mode="Markdown"
+
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    needs: notify_workflow
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+        
+    - name: Make build script executable
+      run: chmod +x build.sh
+      
+    - name: Build project
+      run: ./build.sh
+      
+    - name: Verify build output amd64
+      if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'amd64'
+      run: |
+        if [ ! -f "bin/Release/net9.0/publish/linux-amd64/Aesir" ]; then
+          echo "Build output not found!"
+          exit 1
+        fi
+        ls -la bin/Release/net9.0/publish/linux-amd64/
+
+    - name: Verify build output arm64
+      if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'aarch64'
+      run: |
+        if [ ! -f "bin/Release/net9.0/publish/linux-arm64/Aesir" ]; then
+          echo "Build output not found!"
+          exit 1
+        fi
+        ls -la bin/Release/net9.0/publish/linux-arm64/
+        
+    - name: Get version from input
+      id: get_version
+      run: echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        
+    - name: Read CHANGELOG.md
+      id: changelog
+      run: |
+        CHANGELOG=$(cat CHANGELOG.md)
+        echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+    - name: Create Release
+      run: |
+        gh release create v${{ steps.get_version.outputs.VERSION }} \
+          --title "v${{ steps.get_version.outputs.VERSION }}" \
+          --notes "${{ steps.changelog.outputs.changelog }}" \
+          --target ${{ github.ref_name }}
+        
+    - name: Upload release asset amd64
+      if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'amd64'
+      run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-amd64/Aesir --name "Aesir-amd64" --clobber
+    
+    - name: Upload release asset arm64
+      if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'aarch64'
+      run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-arm64/Aesir --name "Aesir-aarch64" --clobber
+
+  notify_completion:
+    name: Notify Build Completion
+    needs: [setup, build-and-release, notify_workflow]
+    runs-on: ubuntu-latest
+    if: always() && (needs.build-and-release.result != 'cancelled')
+    steps:
+      - name: Determine build results
+        id: results
+        run: |
+          # Count successful builds
+          success_count=0
+          failed_count=0
+          skipped_count=0
+          total_builds=0
+          
+          # Check each architecture that was supposed to build
+          matrix="${{ needs.setup.outputs.matrix }}"
+          
+          # Count total builds based on matrix
+          if echo "$matrix" | grep -q "amd64"; then
+            total_builds=$((total_builds + 1))
+          fi
+          if echo "$matrix" | grep -q "aarch64"; then
+            total_builds=$((total_builds + 1))
+          fi
+          
+          # For builds, we check the overall result of the build-and-release job
+          if [ "${{ needs.build-and-release.result }}" == "success" ]; then
+            success_count=$total_builds
+          elif [ "${{ needs.build-and-release.result }}" == "failure" ]; then
+            failed_count=$total_builds
+          else
+            skipped_count=$total_builds
+          fi
+          
+          echo "success_count=$success_count" >> $GITHUB_OUTPUT
+          echo "failed_count=$failed_count" >> $GITHUB_OUTPUT
+          echo "skipped_count=$skipped_count" >> $GITHUB_OUTPUT
+          echo "total_builds=$total_builds" >> $GITHUB_OUTPUT
+          
+          # Determine overall status
+          if [ $failed_count -eq 0 ] && [ $success_count -gt 0 ]; then
+            echo "status=✅ All builds completed successfully!" >> $GITHUB_OUTPUT
+            echo "emoji=🎉" >> $GITHUB_OUTPUT
+          elif [ $success_count -gt 0 ] && [ $failed_count -gt 0 ]; then
+            echo "status=⚠️ Builds completed with some failures" >> $GITHUB_OUTPUT
+            echo "emoji=⚠️" >> $GITHUB_OUTPUT
+          elif [ $failed_count -gt 0 ]; then
+            echo "status=❌ All builds failed" >> $GITHUB_OUTPUT
+            echo "emoji=💥" >> $GITHUB_OUTPUT
+          else
+            echo "status=⏭️ All builds were skipped" >> $GITHUB_OUTPUT
+            echo "emoji=⏭️" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Telegram Completion Notification
+        run: |
+          DATE=$(date +'%Y-%m-%d')
+          
+          # Build the architecture list that was built
+          arch_list=""
+          matrix="${{ needs.setup.outputs.matrix }}"
+          
+          if echo "$matrix" | grep -q "amd64"; then
+            arch_list="$arch_list• AMD64 (x86_64)
+            "
+          fi
+          if echo "$matrix" | grep -q "aarch64"; then
+            arch_list="$arch_list• ARM64 (AArch64)
+            "
+          fi
+          
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -F message_thread_id="${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}" \
+            -F text="
+            ${{ steps.results.outputs.emoji }} *Aesir Build Completed!*
+            
+            📦 *Repository:* [${{ github.repository }}](https://github.com/${{ github.repository }})
+            🗂️ *Branch:* ${{ github.ref_name }}
+            📅 *Date:* $DATE
+            🏗️ *Version:* v${{ github.event.inputs.version }}
+            
+            📊 *Build Summary:*
+            ✅ Successful: ${{ steps.results.outputs.success_count }}/${{ steps.results.outputs.total_builds }}
+            ❌ Failed: ${{ steps.results.outputs.failed_count }}/${{ steps.results.outputs.total_builds }}
+            ⏭️ Skipped: ${{ steps.results.outputs.skipped_count }}/${{ steps.results.outputs.total_builds }}
+            
+            🔧 *Architectures Built:*
+            $arch_list
+            📋 *Status:* ${{ steps.results.outputs.status }}
+            
+            💾 *Download releases:* [GitHub Releases](https://github.com/${{ github.repository }}/releases)
+            [🔗 View GitHub Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            -F parse_mode="Markdown"
