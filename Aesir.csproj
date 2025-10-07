@@ -20,14 +20,11 @@
     <PackageReference Include="Serilog" Version="4.3.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Spectre.Console" Version="0.51.1" />
-    <Compile Remove="FlashTools/Thor/TheAirBlow.Thor.Shell/**/*.cs" />
-    <Compile Remove="FlashTools/Thor/TheAirBlow.Thor.Library/**/*.cs" />
     <Compile Remove="FlashTools/Syndical/TheAirBlow.Syndical.Application/**/*.cs" />
     <Compile Remove="FlashTools/Syndical/TheAirBlow.Syndical.Library/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="FlashTools/Thor/TheAirBlow.Thor.Library/TheAirBlow.Thor.Library.csproj" />
     <ProjectReference Include="FlashTools/Syndical/TheAirBlow.Syndical.Library/TheAirBlow.Syndical.Library.csproj" />
   </ItemGroup>
 
