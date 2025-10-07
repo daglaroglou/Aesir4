@@ -116,17 +116,22 @@ jobs:
           --notes "${{ steps.changelog.outputs.changelog }}" \
           --target ${{ github.ref_name }}
         
+    - name: Prepare release assets
+      run: |
+        cp bin/Release/net9.0/publish/linux-amd64/Aesir bin/Release/net9.0/publish/linux-amd64/Aesir-amd64
+        cp bin/Release/net9.0/publish/linux-arm64/Aesir bin/Release/net9.0/publish/linux-arm64/Aesir-aarch64
+        
     - name: Upload release asset amd64
       if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'amd64'
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-amd64/Aesir --name "Aesir-amd64" --clobber
+      run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-amd64/Aesir-amd64 --clobber
     
     - name: Upload release asset arm64
       if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'aarch64'
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-arm64/Aesir --name "Aesir-aarch64" --clobber
+      run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-arm64/Aesir-aarch64 --clobber
 
   notify_completion:
     name: Notify Build Completion
