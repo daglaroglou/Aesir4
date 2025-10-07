@@ -47,7 +47,7 @@ jobs:
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F message_thread_id="${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}" \
             -F text="
-            🚀 Build started for Kernels! 
+            🚀 Build started for Aesir! 
             📦 *Repository:* [${{ github.repository }}](https://github.com/${{ github.repository }})
             🗂️ *Branch:* ${{ github.ref_name }}
             🏗️ *Arch:* ${{ github.event.inputs.arch }}
@@ -108,6 +108,8 @@ jobs:
         echo "EOF" >> $GITHUB_OUTPUT
         
     - name: Create Release
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         gh release create v${{ steps.get_version.outputs.VERSION }} \
           --title "v${{ steps.get_version.outputs.VERSION }}" \
@@ -116,10 +118,14 @@ jobs:
         
     - name: Upload release asset amd64
       if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'amd64'
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-amd64/Aesir --name "Aesir-amd64" --clobber
     
     - name: Upload release asset arm64
       if: github.event.inputs.arch == 'All' || github.event.inputs.arch == 'aarch64'
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: gh release upload v${{ steps.get_version.outputs.VERSION }} bin/Release/net9.0/publish/linux-arm64/Aesir --name "Aesir-aarch64" --clobber
 
   notify_completion:
