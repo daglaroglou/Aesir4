@@ -111,7 +111,7 @@
 **📋 Dependencies**
 - [.NET 9.0+ Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
 - GTK+ 4.0 or higher (Linux)
-- `adb` and `fastboot` commands
+- `adb` and `fastboot` commands along with `zenity` and [odin4](https://github.com/Adrilaw/OdinV4/releases) in `/usr/bin`
 - USB access permissions
 
 </td>
