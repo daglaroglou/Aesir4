@@ -8,7 +8,6 @@
 ![.NET](https://img.shields.io/badge/9.0-512BD4?style=for-the-badge&logo=.net&logoColor=white&labelColor=000000)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge&labelColor=000000)
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg?style=for-the-badge&logo=linux&logoColor=white&labelColor=000000)
-![Platform: macOS](https://img.shields.io/badge/Platform-macOS-blue.svg?style=for-the-badge&logo=apple&logoColor=white&labelColor=000000)
 
 ---
 
