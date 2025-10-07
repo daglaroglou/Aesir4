@@ -5538,6 +5538,17 @@ StartupNotify=true
                 dialog.SetTransientFor(window);
             }
 
+            // Add custom header bar like the updater
+            var headerBar = Gtk.HeaderBar.New();
+            headerBar.SetTitleWidget(Gtk.Label.New("About Aesir"));
+            headerBar.ShowTitleButtons = false;
+            dialog.SetTitlebar(headerBar);
+            
+            // Close button
+            var closeButton = Gtk.Button.NewFromIconName("window-close-symbolic");
+            closeButton.OnClicked += (sender, args) => dialog.Destroy();
+            headerBar.PackEnd(closeButton);
+
             // Main container with padding
             var mainBox = Gtk.Box.New(Gtk.Orientation.Vertical, 0);
             mainBox.SetMarginTop(32);
