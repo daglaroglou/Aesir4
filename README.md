@@ -6,7 +6,7 @@
 <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=22&duration=3000&pause=1000&color=36BCF7&center=true&vCenter=true&width=600&lines=Flash+Firmware+with+Confidence;Debug+Like+a+Pro;Install+GAPPS+Effortlessly;Cross-Platform+Power;Norse+Gods+Approved!" alt="Typing SVG" />
 
 ![.NET](https://img.shields.io/badge/9.0-512BD4?style=for-the-badge&logo=.net&logoColor=white&labelColor=000000)
-![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge&labelColor=000000)
+![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge&labelColor=000000)
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg?style=for-the-badge&logo=linux&logoColor=white&labelColor=000000)
 
 ---
@@ -285,13 +285,13 @@ git push origin feature/amazing-feature
 
 <div align="center">
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GPL v3 License** - see the [LICENSE](LICENSE) file for details.
 
 ```
-MIT License - Feel free to use, modify, and distribute!
+GPL v3 License - Feel free to use, modify, and distribute!
 ```
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
 </div>
 
