@@ -106,7 +106,6 @@
 
 **🐧 Supported Platforms**
 - Linux (Ubuntu, Debian, Arch, Fedora, etc.)
-- macOS (Intel & Apple Silicon)
 
 **📋 Dependencies**
 - [.NET 9.0+ Runtime](https://dotnet.microsoft.com/download/dotnet/9.0)
@@ -133,9 +132,8 @@
 
 Visit the [**GitHub Releases**](https://github.com/daglaroglou/Aesir/releases/latest) page and download the appropriate version for your system:
 
-- **Linux x64**: `aesir-linux-x64`
-- **Linux ARM64**: `aesir-linux-arm64`
-- **macOS**: `aesir-macos`
+- **Linux x64**: `aesir-x64`
+- **Linux ARM64**: `aesir-arm64`
 
 ### ⚠️ Important Notes
 - **Root privileges** are required for device access on Linux
