@@ -5785,12 +5785,17 @@ StartupNotify=true
                 
                 if (releaseInfo?.tag_name != null)
                 {
-                    var latestVersion = releaseInfo.tag_name.ToString();
-                    var currentVersion = $"v{settings.CurrentVersion}";
+                    var latestVersionTag = releaseInfo.tag_name.ToString();
+                    var currentVersion = settings.CurrentVersion;
                     var changelog = releaseInfo.body?.ToString() ?? "No changelog available.";
                     
-                    var hasUpdate = latestVersion != currentVersion;
-                    return (hasUpdate, latestVersion, changelog);
+                    // Remove 'v' prefix from tag if present for comparison
+                    var latestVersion = latestVersionTag.TrimStart('v', 'V');
+                    
+                    // Check if the release tag is different from current version
+                    var hasUpdate = !string.Equals(latestVersion, currentVersion, StringComparison.OrdinalIgnoreCase);
+                    
+                    return (hasUpdate, latestVersionTag, changelog);
                 }
             }
             catch (Exception ex)
